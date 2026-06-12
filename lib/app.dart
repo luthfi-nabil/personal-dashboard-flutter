@@ -1,0 +1,94 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'screens/main_shell.dart';
+import 'screens/dashboard_screen.dart';
+import 'screens/transactions_screen.dart';
+import 'screens/add_transaction_screen.dart';
+import 'screens/source_detail_screen.dart';
+import 'screens/category_detail_screen.dart';
+import 'screens/reports_screen.dart';
+import 'screens/settings_screen.dart';
+import 'screens/insulin_screen.dart';
+import 'screens/onboarding_screen.dart';
+import 'screens/api_log_screen.dart';
+import 'theme/app_theme.dart';
+import 'providers/providers.dart';
+import 'core/config.dart';
+
+final _rootKey  = GlobalKey<NavigatorState>();
+final _shellKey = GlobalKey<NavigatorState>();
+
+final _router = GoRouter(
+  navigatorKey: _rootKey,
+  initialLocation: '/',
+  redirect: (context, state) {
+    final cfg = ConfigService.instance.current;
+    if (!cfg.isConfigured && state.matchedLocation != '/onboarding') {
+      return '/onboarding';
+    }
+    if (cfg.isConfigured && state.matchedLocation == '/onboarding') {
+      return '/';
+    }
+    return null;
+  },
+  routes: [
+    GoRoute(
+      path: '/onboarding',
+      builder: (c, s) => const OnboardingScreen(),
+    ),
+    ShellRoute(
+      navigatorKey: _shellKey,
+      builder: (context, state, child) => MainShell(child: child),
+      routes: [
+        GoRoute(path: '/', builder: (c, s) => const DashboardScreen()),
+        GoRoute(path: '/transactions', builder: (c, s) => const TransactionsScreen()),
+        GoRoute(path: '/reports', builder: (c, s) => const ReportsScreen()),
+        GoRoute(path: '/insulin', builder: (c, s) => const InsulinScreen()),
+        GoRoute(path: '/settings', builder: (c, s) => const SettingsScreen()),
+      ],
+    ),
+    GoRoute(
+      parentNavigatorKey: _rootKey,
+      path: '/add',
+      builder: (c, s) => const AddTransactionScreen(),
+    ),
+    GoRoute(
+      parentNavigatorKey: _rootKey,
+      path: '/add/:id',
+      builder: (c, s) => AddTransactionScreen(editId: s.pathParameters['id']),
+    ),
+    GoRoute(
+      parentNavigatorKey: _rootKey,
+      path: '/source/:name',
+      builder: (c, s) => SourceDetailScreen(
+          name: Uri.decodeComponent(s.pathParameters['name']!)),
+    ),
+    GoRoute(
+      parentNavigatorKey: _rootKey,
+      path: '/category/:name',
+      builder: (c, s) => CategoryDetailScreen(
+          name: Uri.decodeComponent(s.pathParameters['name']!)),
+    ),
+    GoRoute(
+      parentNavigatorKey: _rootKey,
+      path: '/api-log',
+      builder: (c, s) => const ApiLogScreen(),
+    ),
+  ],
+);
+
+class PersonalDashboardApp extends ConsumerWidget {
+  const PersonalDashboardApp({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cfg = ref.watch(configProvider);
+    return MaterialApp.router(
+      routerConfig: _router,
+      title: 'Personal Dashboard',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.get(cfg.theme),
+    );
+  }
+}

@@ -1,0 +1,179 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../theme/app_theme.dart';
+import '../providers/providers.dart';
+import '../core/sync.dart';
+
+class MainShell extends ConsumerWidget {
+  final Widget child;
+  const MainShell({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = AppTheme.colorsOf(context);
+    final location = GoRouterState.of(context).uri.path;
+    final syncStatus = ref.watch(syncStatusProvider);
+
+    int currentIndex = 0;
+    if (location.startsWith('/transactions')) currentIndex = 1;
+    else if (location.startsWith('/insulin'))      currentIndex = 2;
+    else if (location.startsWith('/reports'))      currentIndex = 3;
+    else if (location.startsWith('/settings'))     currentIndex = 4;
+
+    return Scaffold(
+      backgroundColor: c.bg,
+      body: Column(
+        children: [
+          _TopBar(syncStatus: syncStatus, c: c),
+          Expanded(child: child),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => context.push('/add'),
+        backgroundColor: c.ink,
+        foregroundColor: c.bg,
+        elevation: 8,
+        child: const Icon(Icons.add, size: 26),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+      bottomNavigationBar: _BottomBar(currentIndex: currentIndex, c: c),
+    );
+  }
+}
+
+class _TopBar extends StatelessWidget {
+  final SyncStatus syncStatus;
+  final AppColors c;
+  const _TopBar({required this.syncStatus, required this.c});
+
+  @override
+  Widget build(BuildContext context) {
+    final (dot, label) = switch (syncStatus) {
+      SyncStatus.syncing => (c.pos.withOpacity(0.6), 'Syncing…'),
+      SyncStatus.done    => (c.pos, 'Synced'),
+      SyncStatus.error   => (c.neg, 'Sync error'),
+      _                  => (c.muted, 'Local only'),
+    };
+
+    return Container(
+      padding: EdgeInsets.only(
+        left: 16, right: 16, top: MediaQuery.of(context).padding.top + 8, bottom: 10,
+      ),
+      decoration: BoxDecoration(
+        color: c.bg,
+        border: Border(bottom: BorderSide(color: c.line2, width: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 32, height: 32,
+            decoration: BoxDecoration(color: c.ink, borderRadius: BorderRadius.circular(9)),
+            child: Center(
+              child: Text('PD',
+                  style: TextStyle(
+                    color: c.bg, fontWeight: FontWeight.w700, fontSize: 13,
+                    letterSpacing: 0.04,
+                  )),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text('Personal Dashboard',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: c.ink)),
+          const Spacer(),
+          GestureDetector(
+            onTap: () => context.go('/settings'),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: c.surface,
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: c.line, width: 0.5),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 7, height: 7,
+                    decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(label, style: TextStyle(color: c.muted, fontSize: 12)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BottomBar extends StatelessWidget {
+  final int currentIndex;
+  final AppColors c;
+  const _BottomBar({required this.currentIndex, required this.c});
+
+  @override
+  Widget build(BuildContext context) {
+    final tabs = [
+      (Icons.home_outlined, Icons.home_rounded, 'Home', '/'),
+      (Icons.list_outlined, Icons.list_rounded, 'Activity', '/transactions'),
+      (Icons.vaccines_outlined, Icons.vaccines_rounded, 'Insulin', '/insulin'),
+      (Icons.bar_chart_outlined, Icons.bar_chart_rounded, 'Reports', '/reports'),
+      (Icons.settings_outlined, Icons.settings_rounded, 'Settings', '/settings'),
+    ];
+
+    return BottomAppBar(
+      color: c.surface.withOpacity(0.95),
+      elevation: 0,
+      shape: const CircularNotchedRectangle(),
+      notchMargin: 8,
+      child: SizedBox(
+        height: 56,
+        child: Row(
+          children: [
+            for (int i = 0; i < tabs.length; i++) ...[
+              if (i == 3) const SizedBox(width: 60),
+              Expanded(
+                child: _TabItem(
+                  icon: currentIndex == i ? tabs[i].$2 : tabs[i].$1,
+                  label: tabs[i].$3,
+                  active: currentIndex == i,
+                  c: c,
+                  onTap: () => context.go(tabs[i].$4),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TabItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool active;
+  final AppColors c;
+  final VoidCallback onTap;
+  const _TabItem({required this.icon, required this.label, required this.active, required this.c, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = active ? c.ink : c.muted;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 22, color: color),
+          const SizedBox(height: 2),
+          Text(label, style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w500)),
+        ],
+      ),
+    );
+  }
+}

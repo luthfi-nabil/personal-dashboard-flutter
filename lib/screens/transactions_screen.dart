@@ -1,0 +1,253 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../core/models.dart';
+import '../core/utils.dart';
+import '../theme/app_theme.dart';
+import '../providers/providers.dart';
+import '../widgets/txn_tile.dart';
+
+class TransactionsScreen extends ConsumerStatefulWidget {
+  const TransactionsScreen({super.key});
+
+  @override
+  ConsumerState<TransactionsScreen> createState() => _TransactionsScreenState();
+}
+
+class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
+  String _typeFilter = 'all';
+  String _sourceFilter = 'all';
+  String _categoryFilter = 'all';
+  String _q = '';
+  final _searchCtl = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchCtl.dispose();
+    super.dispose();
+  }
+
+  List<Transaction> _filter(List<Transaction> txns, List<Source> sources, List<Category> cats) {
+    return txns.where((t) {
+      if (_typeFilter != 'all' && t.type != _typeFilter) return false;
+      if (_sourceFilter != 'all') {
+        final match = t.source == _sourceFilter ||
+            t.fromSource == _sourceFilter ||
+            t.toSource == _sourceFilter;
+        if (!match) return false;
+      }
+      if (_categoryFilter != 'all' && t.category != _categoryFilter) return false;
+      if (_q.isNotEmpty && !(t.description.toLowerCase().contains(_q.toLowerCase()))) return false;
+      return true;
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppTheme.colorsOf(context);
+    final cfg = ref.watch(configProvider);
+    final dataAsync = ref.watch(appDataProvider);
+
+    return dataAsync.when(
+      loading: () => Center(child: CircularProgressIndicator(color: c.accent)),
+      error: (e, _) => Center(child: Text('Error: $e')),
+      data: (data) {
+        final filtered = _filter(data.transactions, data.sources, data.categories);
+        final groups = groupByDay(filtered);
+
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Column(
+                children: [
+                  // Search
+                  Container(
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: c.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: c.line2, width: 0.5),
+                    ),
+                    child: Row(
+                      children: [
+                        const SizedBox(width: 12),
+                        Icon(Icons.search, size: 18, color: c.muted),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: _searchCtl,
+                            style: TextStyle(fontSize: 14, color: c.ink),
+                            decoration: InputDecoration(
+                              hintText: 'Search description…',
+                              hintStyle: TextStyle(color: c.muted, fontSize: 14),
+                              border: InputBorder.none,
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                            onChanged: (v) => setState(() => _q = v),
+                          ),
+                        ),
+                        if (_q.isNotEmpty)
+                          GestureDetector(
+                            onTap: () { _searchCtl.clear(); setState(() => _q = ''); },
+                            child: Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: Icon(Icons.close, size: 16, color: c.muted),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Filters row
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _FilterChip(
+                          label: _typeFilterLabel(_typeFilter),
+                          items: const ['all', 'earning', 'spending', 'transfer'],
+                          labels: const ['All types', 'Earnings', 'Spending', 'Transfers'],
+                          value: _typeFilter,
+                          onChanged: (v) => setState(() => _typeFilter = v),
+                          c: c,
+                        ),
+                        const SizedBox(width: 8),
+                        _FilterChip(
+                          label: _sourceFilter == 'all' ? 'All sources' : _sourceFilter,
+                          items: ['all', ...data.sources.map((s) => s.name)],
+                          labels: ['All sources', ...data.sources.map((s) => s.name)],
+                          value: _sourceFilter,
+                          onChanged: (v) => setState(() => _sourceFilter = v),
+                          c: c,
+                        ),
+                        const SizedBox(width: 8),
+                        _FilterChip(
+                          label: _categoryFilter == 'all' ? 'All categories' : _categoryFilter,
+                          items: ['all', ...data.categories.map((c) => c.name)],
+                          labels: ['All categories', ...data.categories.map((c) => c.name)],
+                          value: _categoryFilter,
+                          onChanged: (v) => setState(() => _categoryFilter = v),
+                          c: c,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: groups.isEmpty
+                  ? Center(child: Text('Nothing matches', style: TextStyle(color: c.muted, fontSize: 13)))
+                  : ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                      itemCount: groups.length,
+                      itemBuilder: (context, i) {
+                        final group = groups[i];
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(4, 14, 4, 6),
+                              child: Text(
+                                fmtDate(group.day, 'long'),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: c.muted,
+                                  letterSpacing: 0.06,
+                                ),
+                              ),
+                            ),
+                            Container(
+                              decoration: BoxDecoration(
+                                color: c.surface,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: c.line2, width: 0.5),
+                              ),
+                              clipBehavior: Clip.hardEdge,
+                              child: Column(
+                                children: group.txns
+                                    .map((t) => TxnTile(
+                                          t: t,
+                                          currency: cfg.currency,
+                                          onTap: () => context.push('/add/${t.id}'),
+                                        ))
+                                    .toList(),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _typeFilterLabel(String v) => switch (v) {
+    'earning' => 'Earnings',
+    'spending' => 'Spending',
+    'transfer' => 'Transfers',
+    _ => 'All types',
+  };
+}
+
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final List<String> items;
+  final List<String> labels;
+  final String value;
+  final ValueChanged<String> onChanged;
+  final AppColors c;
+
+  const _FilterChip({
+    required this.label, required this.items, required this.labels,
+    required this.value, required this.onChanged, required this.c,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () async {
+        final result = await showModalBottomSheet<String>(
+          context: context,
+          backgroundColor: c.surface,
+          shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+          builder: (_) => ListView(
+            shrinkWrap: true,
+            children: [
+              const SizedBox(height: 12),
+              ...List.generate(items.length, (i) => ListTile(
+                title: Text(labels[i], style: TextStyle(color: c.ink)),
+                trailing: items[i] == value ? Icon(Icons.check, color: c.accent) : null,
+                onTap: () => Navigator.pop(context, items[i]),
+              )),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+        if (result != null) onChanged(result);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: c.surface,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: c.line2, width: 0.5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label, style: TextStyle(fontSize: 13, color: c.ink)),
+            const SizedBox(width: 4),
+            Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: c.muted),
+          ],
+        ),
+      ),
+    );
+  }
+}
