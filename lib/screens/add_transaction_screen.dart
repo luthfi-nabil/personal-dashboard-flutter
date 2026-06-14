@@ -50,11 +50,12 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
 
     setState(() => _saving = true);
     try {
+      var savedLocally = false;
       switch (_type) {
         case 'earning':
           final category = data.categories.firstWhere((c) => c.kind == 'earning' && c.name == _category);
           final source = data.sources.firstWhere((s) => s.name == _source);
-          await Repo.instance.createEarning(
+          savedLocally = await Repo.instance.createEarning(
             amount: amount,
             description: description,
             category: category,
@@ -64,7 +65,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
         case 'spending':
           final category = data.categories.firstWhere((c) => c.kind == 'spending' && c.name == _category);
           final source = data.sources.firstWhere((s) => s.name == _source);
-          await Repo.instance.createSpending(
+          savedLocally = await Repo.instance.createSpending(
             amount: amount,
             description: description,
             category: category,
@@ -74,7 +75,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
         case 'transfer':
           final from = data.sources.firstWhere((s) => s.name == _fromSource);
           final to = data.sources.firstWhere((s) => s.name == _toSource);
-          await Repo.instance.createTransfer(
+          savedLocally = await Repo.instance.createTransfer(
             amount: amount,
             description: description,
             fromSource: from,
@@ -83,7 +84,14 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
           break;
       }
       await ref.read(appDataProvider.notifier).refresh();
-      if (mounted) context.pop();
+      if (mounted) {
+        if (savedLocally) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('API unavailable - transaction saved locally and will sync once reconnected.')),
+          );
+        }
+        context.pop();
+      }
     } catch (e) {
       if (!mounted) return;
       final message = e is ApiException ? e.message : 'Failed to save transaction.';

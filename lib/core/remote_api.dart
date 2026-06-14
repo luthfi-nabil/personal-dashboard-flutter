@@ -16,6 +16,15 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+/// Thrown when transaction-api / health-api could not be reached at all
+/// (timeout, connection refused, DNS failure, etc.) as opposed to
+/// [ApiException], which signals an HTTP-level error from a reachable
+/// server. Repo treats this as "go to local mode" - the write is queued
+/// locally and retried once the API is reachable again.
+class ApiUnavailableException extends ApiException {
+  const ApiUnavailableException(super.message);
+}
+
 /// Thin REST client for the real `/api/user/{created_by}/...` endpoints
 /// exposed by transaction-api and health-api. Neither service validates a
 /// token on these routes — `created_by` is just a path segment, so the
@@ -83,7 +92,7 @@ class RemoteApi {
         duration: sw.elapsed,
         error: 'Timed out after ${_requestTimeout.inSeconds}s',
       ));
-      throw ApiException('Request timed out: $method $uri');
+      throw ApiUnavailableException('Request timed out: $method $uri');
     } catch (e) {
       developer.log('✗ $method $uri failed: $e', name: 'RemoteApi', level: 1000);
       ApiCallLog.instance.add(ApiCallEntry(
@@ -93,7 +102,9 @@ class RemoteApi {
         duration: sw.elapsed,
         error: e.toString(),
       ));
-      rethrow;
+      // Connection refused / DNS failure / etc. - the API is unreachable,
+      // not just returning an error, so treat the same as a timeout.
+      throw ApiUnavailableException('Could not reach $method $uri: $e');
     }
     developer.log('← $method $uri (${res.statusCode})', name: 'RemoteApi');
     ApiCallLog.instance.add(ApiCallEntry(

@@ -1,13 +1,16 @@
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'config.dart';
+import 'db.dart';
+import 'repo.dart';
 
 enum SyncStatus { idle, syncing, done, error }
 
 /// Tracks connectivity and periodically asks the app to refresh data from
-/// transaction-api / health-api. There is no local write queue - the APIs
-/// only support create/delete, so writes go straight through and the app
-/// just re-fetches afterwards.
+/// transaction-api / health-api. Writes normally go straight through, but if
+/// the API is unreachable (timeout / connection failure) [Repo] queues them
+/// locally ("local mode" - see [pendingCount]); this service retries that
+/// queue whenever the device reconnects or the periodic sync timer fires.
 class SyncService {
   static final SyncService instance = SyncService._();
   SyncService._();
@@ -21,6 +24,13 @@ class SyncService {
   SyncStatus _status = SyncStatus.idle;
   SyncStatus get status => _status;
 
+  /// Number of transactions saved locally because the API was unreachable
+  /// and not yet pushed to the server. `pendingCount > 0` means the app is
+  /// in "local mode" for those writes.
+  int _pendingCount = 0;
+  int get pendingCount => _pendingCount;
+  bool get localMode => _pendingCount > 0;
+
   /// Set by the app (typically `appDataProvider`'s notifier) to refresh
   /// cached data. Safe to call repeatedly; errors are reported via [status].
   Future<void> Function()? onRefresh;
@@ -31,6 +41,17 @@ class SyncService {
   void _emit(SyncStatus s) {
     _status = s;
     for (final l in _listeners) l(s);
+  }
+
+  final _pendingListeners = <void Function(int)>[];
+  void addPendingListener(void Function(int) l) => _pendingListeners.add(l);
+  void removePendingListener(void Function(int) l) => _pendingListeners.remove(l);
+
+  /// Called by [Repo] whenever a transaction is queued or flushed locally.
+  void updatePendingCount(int count) {
+    if (_pendingCount == count) return;
+    _pendingCount = count;
+    for (final l in _pendingListeners) l(count);
   }
 
   Future<void> start() async {
@@ -45,6 +66,10 @@ class SyncService {
 
     ConfigService.instance.addListener(_restartTimer);
     _restartTimer();
+
+    final pending = await AppDb.instance.getPendingTransactions();
+    updatePendingCount(pending.length);
+    if (_pendingCount > 0 && _online) syncNow();
   }
 
   void _restartTimer() {
@@ -63,6 +88,7 @@ class SyncService {
 
     _emit(SyncStatus.syncing);
     try {
+      await Repo.instance.syncPendingTransactions();
       await onRefresh?.call();
       _emit(SyncStatus.done);
     } catch (_) {

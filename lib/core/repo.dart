@@ -1,14 +1,22 @@
+import 'package:uuid/uuid.dart';
 import 'db.dart';
 import 'config.dart';
 import 'models.dart';
 import 'remote_api.dart';
 import 'sync.dart';
 
+const _uuid = Uuid();
+
 /// Online-first data layer. When configured (a username is set) and online,
 /// reads go straight to transaction-api / health-api and the result is
 /// cached locally; otherwise (offline, or not yet configured) cached/seeded
-/// data from SQLite is used. Writes go straight to the REST APIs - there is
-/// no offline write queue since the APIs only support create/delete.
+/// data from SQLite is used.
+///
+/// Writes go straight to the REST APIs. If a write fails because the API is
+/// unreachable ([ApiUnavailableException] - timeout or connection failure),
+/// the transaction is saved locally with `syncState: 'pending'` ("local
+/// mode") and [syncPendingTransactions] retries it once the API is reachable
+/// again (see [SyncService]).
 class Repo {
   static final Repo instance = Repo._();
   Repo._();
@@ -24,12 +32,30 @@ class Repo {
       try {
         final data = await _fetchRemote(cfg);
         await _cacheRemote(data);
-        return data;
+        return _withPending(data);
       } catch (_) {
         // fall back to local cache below
       }
     }
     return _fromCache();
+  }
+
+  /// Merges transactions still queued in "local mode" into freshly-fetched
+  /// remote [data] so they remain visible until [syncPendingTransactions]
+  /// pushes them.
+  Future<AppData> _withPending(AppData data) async {
+    final pending = await AppDb.instance.getPendingTransactions();
+    if (pending.isEmpty) return data;
+    final transactions = [...pending, ...data.transactions]
+      ..sort((a, b) => b.date.compareTo(a.date));
+    return AppData(
+      sources: data.sources,
+      categories: data.categories,
+      transactions: transactions,
+      insulinItems: data.insulinItems,
+      insulinAssigns: data.insulinAssigns,
+      insulinUsages: data.insulinUsages,
+    );
   }
 
   Future<AppData> _fromCache() async {
@@ -270,13 +296,20 @@ class Repo {
   }
 
   // ── Transactions (create-only; the APIs have no edit/delete) ─────────
-  Future<void> createEarning({
+  //
+  // Each `createXxx` returns `true` if the API was unreachable and the
+  // transaction was queued locally ("local mode"), or `false` if it was
+  // sent to the server immediately. Other failures (e.g. validation errors
+  // from a reachable server) are thrown as [ApiException] as before.
+
+  Future<bool> createEarning({
     required double amount,
     required String description,
     required Category category,
     required Source source,
-  }) =>
-      RemoteApi(_cfg).createEarning(
+  }) async {
+    try {
+      await RemoteApi(_cfg).createEarning(
         totalAmount: amount,
         description: description,
         earningCategoryId: category.id,
@@ -284,14 +317,31 @@ class Repo {
         sourceId: source.id,
         source: source.name,
       );
+      return false;
+    } on ApiUnavailableException {
+      await _queuePending(Transaction(
+        id: _uuid.v4(),
+        type: 'earning',
+        amount: amount,
+        description: description,
+        category: category.name,
+        source: source.name,
+        date: _nowIso(),
+        syncState: 'pending',
+        updatedAt: _nowIso(),
+      ));
+      return true;
+    }
+  }
 
-  Future<void> createSpending({
+  Future<bool> createSpending({
     required double amount,
     required String description,
     required Category category,
     required Source source,
-  }) =>
-      RemoteApi(_cfg).createSpending(
+  }) async {
+    try {
+      await RemoteApi(_cfg).createSpending(
         totalAmount: amount,
         description: description,
         spendingCategoryId: category.id,
@@ -299,42 +349,169 @@ class Repo {
         sourceId: source.id,
         source: source.name,
       );
+      return false;
+    } on ApiUnavailableException {
+      await _queuePending(Transaction(
+        id: _uuid.v4(),
+        type: 'spending',
+        amount: amount,
+        description: description,
+        category: category.name,
+        source: source.name,
+        date: _nowIso(),
+        syncState: 'pending',
+        updatedAt: _nowIso(),
+      ));
+      return true;
+    }
+  }
 
   /// Creates a transfer as a paired spending (fromSource) + earning
   /// (toSource), both tagged with the server's configured Transfer category.
-  Future<void> createTransfer({
+  Future<bool> createTransfer({
     required double amount,
     required String description,
     required Source fromSource,
     required Source toSource,
   }) async {
-    final remote = RemoteApi(_cfg);
-    final settings = await remote.getSettings();
-    String catId = '';
-    String catName = 'Transfer';
-    for (final s in settings) {
-      if (s['app_setting_key'] == 'TRANSFER_CATEGORY_ID') catId = s['app_setting_value'] as String? ?? '';
-      if (s['app_setting_key'] == 'TRANSFER_CATEGORY_NAME') catName = s['app_setting_value'] as String? ?? catName;
+    try {
+      final remote = RemoteApi(_cfg);
+      final settings = await remote.getSettings();
+      String catId = '';
+      String catName = 'Transfer';
+      for (final s in settings) {
+        if (s['app_setting_key'] == 'TRANSFER_CATEGORY_ID') catId = s['app_setting_value'] as String? ?? '';
+        if (s['app_setting_key'] == 'TRANSFER_CATEGORY_NAME') catName = s['app_setting_value'] as String? ?? catName;
+      }
+      if (catId.isEmpty) {
+        throw const ApiException('Transfer category is not configured on the server.');
+      }
+      await remote.createSpending(
+        totalAmount: amount,
+        description: description,
+        spendingCategoryId: catId,
+        spendingCategory: catName,
+        sourceId: fromSource.id,
+        source: fromSource.name,
+      );
+      await remote.createEarning(
+        totalAmount: amount,
+        description: description,
+        earningCategoryId: catId,
+        earningCategory: catName,
+        sourceId: toSource.id,
+        source: toSource.name,
+      );
+      return false;
+    } on ApiUnavailableException {
+      await _queuePending(Transaction(
+        id: _uuid.v4(),
+        type: 'transfer',
+        amount: amount,
+        description: description,
+        fromSource: fromSource.name,
+        toSource: toSource.name,
+        date: _nowIso(),
+        syncState: 'pending',
+        updatedAt: _nowIso(),
+      ));
+      return true;
     }
-    if (catId.isEmpty) {
-      throw const ApiException('Transfer category is not configured on the server.');
+  }
+
+  Future<void> _queuePending(Transaction t) async {
+    await AppDb.instance.putTransaction(t);
+    final pending = await AppDb.instance.getPendingTransactions();
+    SyncService.instance.updatePendingCount(pending.length);
+  }
+
+  /// Retries transactions queued while in "local mode". Stops at the first
+  /// [ApiUnavailableException] (the API is still unreachable) and leaves the
+  /// rest queued for the next sync; other errors (e.g. a category/source
+  /// that no longer exists) are skipped so one bad entry can't block the
+  /// rest. Successfully-sent entries are removed from the local queue - the
+  /// follow-up `onRefresh` (triggered by [SyncService]) re-fetches them from
+  /// the server with their real ids.
+  Future<void> syncPendingTransactions() async {
+    final pending = await AppDb.instance.getPendingTransactions();
+    if (pending.isEmpty) {
+      SyncService.instance.updatePendingCount(0);
+      return;
     }
-    await remote.createSpending(
-      totalAmount: amount,
-      description: description,
-      spendingCategoryId: catId,
-      spendingCategory: catName,
-      sourceId: fromSource.id,
-      source: fromSource.name,
-    );
-    await remote.createEarning(
-      totalAmount: amount,
-      description: description,
-      earningCategoryId: catId,
-      earningCategory: catName,
-      sourceId: toSource.id,
-      source: toSource.name,
-    );
+
+    final cfg = _cfg;
+    final remote = RemoteApi(cfg);
+    final sources = await AppDb.instance.getSources();
+    final categories = await AppDb.instance.getCategories();
+
+    for (final t in pending) {
+      try {
+        switch (t.type) {
+          case 'earning':
+            final cat = categories.firstWhere((c) => c.kind == 'earning' && c.name == t.category);
+            final src = sources.firstWhere((s) => s.name == t.source);
+            await remote.createEarning(
+              totalAmount: t.amount,
+              description: t.description,
+              earningCategoryId: cat.id,
+              earningCategory: cat.name,
+              sourceId: src.id,
+              source: src.name,
+            );
+            break;
+          case 'spending':
+            final cat = categories.firstWhere((c) => c.kind == 'spending' && c.name == t.category);
+            final src = sources.firstWhere((s) => s.name == t.source);
+            await remote.createSpending(
+              totalAmount: t.amount,
+              description: t.description,
+              spendingCategoryId: cat.id,
+              spendingCategory: cat.name,
+              sourceId: src.id,
+              source: src.name,
+            );
+            break;
+          case 'transfer':
+            final from = sources.firstWhere((s) => s.name == t.fromSource);
+            final to = sources.firstWhere((s) => s.name == t.toSource);
+            final settings = await remote.getSettings();
+            String catId = '';
+            String catName = 'Transfer';
+            for (final s in settings) {
+              if (s['app_setting_key'] == 'TRANSFER_CATEGORY_ID') catId = s['app_setting_value'] as String? ?? '';
+              if (s['app_setting_key'] == 'TRANSFER_CATEGORY_NAME') catName = s['app_setting_value'] as String? ?? catName;
+            }
+            if (catId.isEmpty) {
+              throw const ApiException('Transfer category is not configured on the server.');
+            }
+            await remote.createSpending(
+              totalAmount: t.amount,
+              description: t.description,
+              spendingCategoryId: catId,
+              spendingCategory: catName,
+              sourceId: from.id,
+              source: from.name,
+            );
+            await remote.createEarning(
+              totalAmount: t.amount,
+              description: t.description,
+              earningCategoryId: catId,
+              earningCategory: catName,
+              sourceId: to.id,
+              source: to.name,
+            );
+            break;
+        }
+        await AppDb.instance.deleteTransaction(t.id);
+      } on ApiUnavailableException {
+        break;
+      } catch (_) {
+        // Leave this entry queued and move on to the next.
+      }
+    }
+
+    final remaining = await AppDb.instance.getPendingTransactions();
+    SyncService.instance.updatePendingCount(remaining.length);
   }
 
   // ── Insulin ──────────────────────────────────────────────────────────

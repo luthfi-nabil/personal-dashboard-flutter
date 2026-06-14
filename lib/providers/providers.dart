@@ -40,3 +40,12 @@ final StateProvider<SyncStatus> syncStatusProvider = StateProvider<SyncStatus>((
   });
   return SyncService.instance.status;
 });
+
+/// Number of transactions saved locally because the API was unreachable
+/// ("local mode") and not yet pushed to the server.
+final StateProvider<int> pendingSyncCountProvider = StateProvider<int>((ref) {
+  SyncService.instance.addPendingListener((count) {
+    ref.read(pendingSyncCountProvider.notifier).state = count;
+  });
+  return SyncService.instance.pendingCount;
+});

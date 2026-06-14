@@ -142,6 +142,13 @@ class AppDb {
     await _db.delete('transactions', where: 'id = ?', whereArgs: [id]);
   }
 
+  /// Transactions created while the API was unreachable ("local mode"),
+  /// queued here until [Repo.syncPendingTransactions] can push them.
+  Future<List<Transaction>> getPendingTransactions() async {
+    final rows = await _db.query('transactions', where: "syncState = 'pending'", orderBy: 'date ASC');
+    return rows.map(Transaction.fromMap).toList();
+  }
+
   // ── Meta ───────────────────────────────────────────────────────────
   Future<String?> getMeta(String key) async {
     final rows = await _db.query('meta', where: 'key = ?', whereArgs: [key]);
@@ -213,9 +220,12 @@ class AppDb {
     });
   }
 
+  /// Replaces the cached server transactions while preserving any rows
+  /// still queued in "local mode" (`syncState == 'pending'`), so an
+  /// offline-created transaction isn't wiped out before it's synced.
   Future<void> replaceTransactions(List<Transaction> items) async {
     await _db.transaction((txn) async {
-      await txn.delete('transactions');
+      await txn.delete('transactions', where: "syncState != 'pending'");
       for (final t in items) {
         await txn.insert('transactions', t.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
       }

@@ -14,6 +14,7 @@ class MainShell extends ConsumerWidget {
     final c = AppTheme.colorsOf(context);
     final location = GoRouterState.of(context).uri.path;
     final syncStatus = ref.watch(syncStatusProvider);
+    final pendingCount = ref.watch(pendingSyncCountProvider);
 
     int currentIndex = 0;
     if (location.startsWith('/transactions')) currentIndex = 1;
@@ -25,7 +26,7 @@ class MainShell extends ConsumerWidget {
       backgroundColor: c.bg,
       body: Column(
         children: [
-          _TopBar(syncStatus: syncStatus, c: c),
+          _TopBar(syncStatus: syncStatus, pendingCount: pendingCount, c: c),
           Expanded(child: child),
         ],
       ),
@@ -44,17 +45,20 @@ class MainShell extends ConsumerWidget {
 
 class _TopBar extends StatelessWidget {
   final SyncStatus syncStatus;
+  final int pendingCount;
   final AppColors c;
-  const _TopBar({required this.syncStatus, required this.c});
+  const _TopBar({required this.syncStatus, required this.pendingCount, required this.c});
 
   @override
   Widget build(BuildContext context) {
-    final (dot, label) = switch (syncStatus) {
-      SyncStatus.syncing => (c.pos.withOpacity(0.6), 'Syncing…'),
-      SyncStatus.done    => (c.pos, 'Synced'),
-      SyncStatus.error   => (c.neg, 'Sync error'),
-      _                  => (c.muted, 'Local only'),
-    };
+    final (dot, label) = pendingCount > 0
+        ? (c.neg, '$pendingCount pending sync')
+        : switch (syncStatus) {
+            SyncStatus.syncing => (c.pos.withOpacity(0.6), 'Syncing…'),
+            SyncStatus.done    => (c.pos, 'Synced'),
+            SyncStatus.error   => (c.neg, 'Sync error'),
+            _                  => (c.muted, 'Local only'),
+          };
 
     return Container(
       padding: EdgeInsets.only(
