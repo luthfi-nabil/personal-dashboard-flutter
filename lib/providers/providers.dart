@@ -5,10 +5,15 @@ import '../core/config.dart';
 import '../core/sync.dart';
 
 // ── App data ────────────────────────────────────────────────────────────────
-class AppDataNotifier extends AsyncNotifier<AppData> {
+class AppDataNotifier extends AutoDisposeAsyncNotifier<AppData> {
   @override
   Future<AppData> build() {
+    // Rebuild the cached/remote data view whenever the active account
+    // changes. Without this dependency, the provider survives logout/login
+    // and can keep showing the previous user's AppData.
+    ref.watch(configProvider.select((cfg) => cfg.userId));
     SyncService.instance.onRefresh = refresh;
+    ref.onDispose(() => SyncService.instance.onRefresh = null);
     return Repo.instance.all();
   }
 
@@ -18,12 +23,25 @@ class AppDataNotifier extends AsyncNotifier<AppData> {
 }
 
 final appDataProvider =
-    AsyncNotifierProvider<AppDataNotifier, AppData>(AppDataNotifier.new);
+    AsyncNotifierProvider.autoDispose<AppDataNotifier, AppData>(
+  AppDataNotifier.new,
+);
 
 // ── Config ───────────────────────────────────────────────────────────────────
 class ConfigNotifier extends Notifier<AppConfig> {
   @override
-  AppConfig build() => ConfigService.instance.current;
+  AppConfig build() {
+    ConfigService.instance.addListener(_onExternalChange);
+    ref.onDispose(
+        () => ConfigService.instance.removeListener(_onExternalChange));
+    return ConfigService.instance.current;
+  }
+
+  /// Keeps this provider in sync when [ConfigService] is updated directly
+  /// (e.g. [ConfigService.logout] called from [Repo] after a `401`).
+  void _onExternalChange() {
+    state = ConfigService.instance.current;
+  }
 
   Future<void> update(AppConfig cfg) async {
     await ConfigService.instance.save(cfg);
@@ -31,10 +49,12 @@ class ConfigNotifier extends Notifier<AppConfig> {
   }
 }
 
-final configProvider = NotifierProvider<ConfigNotifier, AppConfig>(ConfigNotifier.new);
+final configProvider =
+    NotifierProvider<ConfigNotifier, AppConfig>(ConfigNotifier.new);
 
 // ── Sync status ───────────────────────────────────────────────────────────────
-final StateProvider<SyncStatus> syncStatusProvider = StateProvider<SyncStatus>((ref) {
+final StateProvider<SyncStatus> syncStatusProvider =
+    StateProvider<SyncStatus>((ref) {
   SyncService.instance.addListener((s) {
     ref.read(syncStatusProvider.notifier).state = s;
   });

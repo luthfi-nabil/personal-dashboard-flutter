@@ -72,19 +72,21 @@ const _txnsRaw = [
   ('transfer', 1000000.0,  'Nabung tipid',     null,          null, 'BCA Debit', 'BCA-Pocket-Tabungan','2026-02-05T09:31:19'),
 ];
 
+/// Seeds the demo data set used while logged out (`userId == ''`).
 Future<bool> seedIfEmpty() async {
-  final existing = await AppDb.instance.getSources();
+  const userId = '';
+  final existing = await AppDb.instance.getSources(userId);
   if (existing.isNotEmpty) return false;
 
   final now = DateTime.now().toIso8601String();
   for (final (id, name, kind) in _sourcesRaw) {
-    await AppDb.instance.putSource(Source(id: id, name: name, kind: kind, syncState: 'synced', updatedAt: now));
+    await AppDb.instance.putSource(Source(id: id, name: name, kind: kind, syncState: 'synced', updatedAt: now), userId);
   }
   for (final name in _earnCats) {
-    await AppDb.instance.putCategory(Category(id: _uuid.v4(), name: name, kind: 'earning', syncState: 'synced', updatedAt: now));
+    await AppDb.instance.putCategory(Category(id: _uuid.v4(), name: name, kind: 'earning', syncState: 'synced', updatedAt: now), userId);
   }
   for (final name in _spendCats) {
-    await AppDb.instance.putCategory(Category(id: _uuid.v4(), name: name, kind: 'spending', syncState: 'synced', updatedAt: now));
+    await AppDb.instance.putCategory(Category(id: _uuid.v4(), name: name, kind: 'spending', syncState: 'synced', updatedAt: now), userId);
   }
   for (final (type, amount, description, category, source, fromSource, toSource, date) in _txnsRaw) {
     await AppDb.instance.putTransaction(Transaction(
@@ -99,7 +101,7 @@ Future<bool> seedIfEmpty() async {
       date: date,
       syncState: 'synced',
       updatedAt: now,
-    ));
+    ), userId);
   }
   return true;
 }

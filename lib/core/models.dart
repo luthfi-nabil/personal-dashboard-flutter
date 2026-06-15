@@ -168,6 +168,7 @@ class Transaction {
 class AppConfig {
   final String apiBase;
   final String healthBase;
+  final String loginBase;
   final bool autoSync;
   final int syncIntervalSec;
   final String theme;
@@ -177,10 +178,14 @@ class AppConfig {
   final String email;
   final String phoneNumber;
   final String telegramUsername;
+  final String authToken;
+  final String tokenExpiresAt;
+  final String userId;
 
   const AppConfig({
     this.apiBase = 'http://127.0.0.1:8080',
     this.healthBase = 'http://127.0.0.1:8082',
+    this.loginBase = 'http://127.0.0.1:3002',
     this.autoSync = true,
     this.syncIntervalSec = 30,
     this.theme = 'ink',
@@ -190,17 +195,34 @@ class AppConfig {
     this.email = '',
     this.phoneNumber = '',
     this.telegramUsername = '',
+    this.authToken = '',
+    this.tokenExpiresAt = '',
+    this.userId = '',
   });
 
-  /// The app is "connected" once a username (used as `created_by` for
-  /// transaction-api / health-api) has been set.
-  bool get isConfigured => username.trim().isNotEmpty;
+  /// Whether [tokenExpiresAt] is set and in the past.
+  bool get isTokenExpired {
+    if (tokenExpiresAt.isEmpty) return false;
+    final exp = DateTime.tryParse(tokenExpiresAt);
+    if (exp == null) return false;
+    return DateTime.now().isAfter(exp);
+  }
+
+  /// The app is "logged in" once login-api has issued a JWT (used as a
+  /// Bearer token for transaction-api / health-api `/api/user/...` routes)
+  /// and that token hasn't expired yet.
+  bool get isLoggedIn => authToken.trim().isNotEmpty && !isTokenExpired;
+
+  /// Kept as an alias of [isLoggedIn] for call sites that historically
+  /// checked whether the app was "configured".
+  bool get isConfigured => isLoggedIn;
 
   factory AppConfig.fromJson(String raw) {
     final m = jsonDecode(raw) as Map<String, dynamic>;
     return AppConfig(
       apiBase: m['apiBase'] as String? ?? 'http://127.0.0.1:8080',
       healthBase: m['healthBase'] as String? ?? 'http://127.0.0.1:8082',
+      loginBase: m['loginBase'] as String? ?? 'http://127.0.0.1:3002',
       autoSync: m['autoSync'] as bool? ?? true,
       syncIntervalSec: m['syncIntervalSec'] as int? ?? 30,
       theme: m['theme'] as String? ?? 'ink',
@@ -210,12 +232,16 @@ class AppConfig {
       email: m['email'] as String? ?? '',
       phoneNumber: m['phoneNumber'] as String? ?? '',
       telegramUsername: m['telegramUsername'] as String? ?? '',
+      authToken: m['authToken'] as String? ?? '',
+      tokenExpiresAt: m['tokenExpiresAt'] as String? ?? '',
+      userId: m['userId'] as String? ?? '',
     );
   }
 
   String toJson() => jsonEncode({
         'apiBase': apiBase,
         'healthBase': healthBase,
+        'loginBase': loginBase,
         'autoSync': autoSync,
         'syncIntervalSec': syncIntervalSec,
         'theme': theme,
@@ -225,11 +251,15 @@ class AppConfig {
         'email': email,
         'phoneNumber': phoneNumber,
         'telegramUsername': telegramUsername,
+        'authToken': authToken,
+        'tokenExpiresAt': tokenExpiresAt,
+        'userId': userId,
       });
 
   AppConfig copyWith({
     String? apiBase,
     String? healthBase,
+    String? loginBase,
     bool? autoSync,
     int? syncIntervalSec,
     String? theme,
@@ -239,10 +269,14 @@ class AppConfig {
     String? email,
     String? phoneNumber,
     String? telegramUsername,
+    String? authToken,
+    String? tokenExpiresAt,
+    String? userId,
   }) =>
       AppConfig(
         apiBase: apiBase ?? this.apiBase,
         healthBase: healthBase ?? this.healthBase,
+        loginBase: loginBase ?? this.loginBase,
         autoSync: autoSync ?? this.autoSync,
         syncIntervalSec: syncIntervalSec ?? this.syncIntervalSec,
         theme: theme ?? this.theme,
@@ -252,6 +286,9 @@ class AppConfig {
         email: email ?? this.email,
         phoneNumber: phoneNumber ?? this.phoneNumber,
         telegramUsername: telegramUsername ?? this.telegramUsername,
+        authToken: authToken ?? this.authToken,
+        tokenExpiresAt: tokenExpiresAt ?? this.tokenExpiresAt,
+        userId: userId ?? this.userId,
       );
 }
 

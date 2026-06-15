@@ -10,6 +10,8 @@ class ApiCallEntry {
   final Duration duration;
   final int? statusCode;
   final String? error;
+  final String? requestBody;
+  final String? responseBody;
 
   const ApiCallEntry({
     required this.time,
@@ -18,6 +20,8 @@ class ApiCallEntry {
     required this.duration,
     this.statusCode,
     this.error,
+    this.requestBody,
+    this.responseBody,
   });
 
   bool get isOk => error == null && statusCode != null && statusCode! < 400;

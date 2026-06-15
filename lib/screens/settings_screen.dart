@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../core/models.dart';
 import '../core/repo.dart';
+import '../core/config.dart';
 import '../core/db.dart';
 import '../core/seed.dart';
 import '../core/utils.dart';
@@ -23,36 +24,32 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  late TextEditingController _usernameCtl;
-  late TextEditingController _apiBaseCtl;
-  late TextEditingController _healthBaseCtl;
   String _categoryFilter = 'all';
 
-  @override
-  void initState() {
-    super.initState();
-    final cfg = ref.read(configProvider);
-    _usernameCtl = TextEditingController(text: cfg.username);
-    _apiBaseCtl = TextEditingController(text: cfg.apiBase);
-    _healthBaseCtl = TextEditingController(text: cfg.healthBase);
-  }
+  Future<void> _logout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Log out?'),
+        content:
+            const Text("You'll need to sign in again to sync with the server."),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Log out')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await ConfigService.instance.logout();
+    if (!mounted) return;
 
-  @override
-  void dispose() {
-    _usernameCtl.dispose();
-    _apiBaseCtl.dispose();
-    _healthBaseCtl.dispose();
-    super.dispose();
-  }
-
-  void _saveAccountConfig() {
-    final cfg = ref.read(configProvider);
-    ref.read(configProvider.notifier).update(cfg.copyWith(
-          username: _usernameCtl.text.trim(),
-          apiBase: _apiBaseCtl.text.trim(),
-          healthBase: _healthBaseCtl.text.trim(),
-        ));
-    ref.read(appDataProvider.notifier).refresh();
+    // Explicitly replace the shell route after clearing the session. The
+    // router redirect remains a fallback for expiry and API-triggered logout.
+    context.go('/login');
   }
 
   Future<void> _syncNow() async {
@@ -74,18 +71,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final dir = await getTemporaryDirectory();
     final file = File('${dir.path}/personal-dashboard.json');
     await file.writeAsString(json);
-    await Share.shareXFiles([XFile(file.path)], subject: 'personal-dashboard.json');
+    await Share.shareXFiles([XFile(file.path)],
+        subject: 'personal-dashboard.json');
   }
 
   Future<void> _resetData() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Reset & re-seed?'),
-        content: const Text('This will wipe all local data and restore sample data.'),
+        content: const Text(
+            'This will wipe all local data and restore sample data.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Reset')),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Reset')),
         ],
       ),
     );
@@ -100,7 +103,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: AppTheme.colorsOf(context).bg,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => _SourceEditorSheet(
         source: source,
         onSaved: () async {
@@ -115,7 +119,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: AppTheme.colorsOf(context).bg,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => _CategoryEditorSheet(
         category: category,
         onSaved: () async {
@@ -138,122 +143,186 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
         children: [
           const SizedBox(height: 14),
-          Text('Settings', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, color: c.ink, letterSpacing: -0.02)),
+          Text('Settings',
+              style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w700,
+                  color: c.ink,
+                  letterSpacing: -0.02)),
           const SizedBox(height: 18),
 
           // ── Account ────────────────────────────────────────────
           _SectionTitle('Account', c),
           const SizedBox(height: 10),
-          _card(c, Column(
-            children: [
-              TextField(
-                controller: _usernameCtl,
-                style: TextStyle(color: c.ink, fontSize: 15),
-                onSubmitted: (_) => _saveAccountConfig(),
-                decoration: InputDecoration(
-                  labelText: 'Username',
-                  hintText: 'e.g. luthfi',
-                  hintStyle: TextStyle(color: c.muted),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _apiBaseCtl,
-                style: TextStyle(color: c.ink, fontSize: 15),
-                onSubmitted: (_) => _saveAccountConfig(),
-                decoration: InputDecoration(
-                  labelText: 'Transaction API base URL',
-                  hintStyle: TextStyle(color: c.muted),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _healthBaseCtl,
-                style: TextStyle(color: c.ink, fontSize: 15),
-                onSubmitted: (_) => _saveAccountConfig(),
-                decoration: InputDecoration(
-                  labelText: 'Health API base URL',
-                  hintStyle: TextStyle(color: c.muted),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(onPressed: _saveAccountConfig, child: Text('Save', style: TextStyle(color: c.accent))),
-              ),
-              const Divider(height: 1),
-              const SizedBox(height: 12),
-              Row(
+          _card(
+              c,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Switch(
-                    value: cfg.autoSync,
-                    activeColor: c.accent,
-                    onChanged: (v) => ref.read(configProvider.notifier).update(cfg.copyWith(autoSync: v)),
+                  Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                            color: c.ink,
+                            borderRadius: BorderRadius.circular(12)),
+                        child: Text(
+                          cfg.username.isNotEmpty
+                              ? cfg.username[0].toUpperCase()
+                              : '?',
+                          style: TextStyle(
+                              color: c.bg,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                                cfg.username.isEmpty
+                                    ? 'Signed in'
+                                    : cfg.username,
+                                style: TextStyle(
+                                    color: c.ink,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600)),
+                            if (cfg.email.isNotEmpty)
+                              Text(cfg.email,
+                                  style:
+                                      TextStyle(color: c.muted, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      TextButton(
+                          onPressed: _logout,
+                          child:
+                              Text('Log out', style: TextStyle(color: c.neg))),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text('Auto-sync when online', style: TextStyle(color: c.ink, fontSize: 14))),
-                  TextButton(onPressed: _syncNow, child: Text('Sync now', style: TextStyle(color: c.accent))),
+                  const SizedBox(height: 12),
+                  const Divider(height: 1),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Switch(
+                        value: cfg.autoSync,
+                        activeColor: c.accent,
+                        onChanged: (v) => ref
+                            .read(configProvider.notifier)
+                            .update(cfg.copyWith(autoSync: v)),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                          child: Text('Auto-sync when online',
+                              style: TextStyle(color: c.ink, fontSize: 14))),
+                      TextButton(
+                          onPressed: _syncNow,
+                          child: Text('Sync now',
+                              style: TextStyle(color: c.accent))),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      cfg.isLoggedIn
+                          ? (SyncService.instance.isOnline
+                              ? 'Connected, ready to sync'
+                              : 'Signed in but offline - showing cached data')
+                          : 'Sign in to connect to your server',
+                      style: TextStyle(fontSize: 12, color: c.muted),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: () => context.push('/server-settings'),
+                        icon:
+                            Icon(Icons.dns_outlined, size: 16, color: c.accent),
+                        label: Text('Server settings',
+                            style: TextStyle(color: c.accent)),
+                        style: TextButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            minimumSize: const Size(0, 32)),
+                      ),
+                      const SizedBox(width: 16),
+                      TextButton.icon(
+                        onPressed: () => context.push('/api-log'),
+                        icon: Icon(Icons.network_check,
+                            size: 16, color: c.accent),
+                        label: Text('API Watcher',
+                            style: TextStyle(color: c.accent)),
+                        style: TextButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            minimumSize: const Size(0, 32)),
+                      ),
+                    ],
+                  ),
                 ],
-              ),
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  cfg.isConfigured
-                      ? (SyncService.instance.isOnline ? 'Connected, ready to sync' : 'Configured but offline - showing cached data')
-                      : 'Set a username to connect to your server',
-                  style: TextStyle(fontSize: 12, color: c.muted),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => context.push('/api-log'),
-                  icon: Icon(Icons.network_check, size: 16, color: c.accent),
-                  label: Text('API Watcher', style: TextStyle(color: c.accent)),
-                  style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 32)),
-                ),
-              ),
-            ],
-          )),
+              )),
           const SizedBox(height: 18),
 
           // ── Appearance ─────────────────────────────────────────
           _SectionTitle('Appearance', c),
           const SizedBox(height: 10),
-          _card(c, Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Theme', style: TextStyle(fontSize: 12, color: c.muted, fontWeight: FontWeight.w500)),
-              const SizedBox(height: 8),
-              _SegRow(
-                options: const ['ink', 'warm', 'dark'],
-                current: cfg.theme,
-                c: c,
-                onSelect: (v) => ref.read(configProvider.notifier).update(cfg.copyWith(theme: v)),
-              ),
-              const SizedBox(height: 14),
-              Text('Density', style: TextStyle(fontSize: 12, color: c.muted, fontWeight: FontWeight.w500)),
-              const SizedBox(height: 8),
-              _SegRow(
-                options: const ['compact', 'regular', 'comfy'],
-                current: cfg.density,
-                c: c,
-                onSelect: (v) => ref.read(configProvider.notifier).update(cfg.copyWith(density: v)),
-              ),
-              const SizedBox(height: 14),
-              Text('Currency format', style: TextStyle(fontSize: 12, color: c.muted, fontWeight: FontWeight.w500)),
-              const SizedBox(height: 8),
-              _SegRow(
-                options: const ['full', 'short'],
-                labels: const ['Rp 12.596.000', 'Rp 12,6 jt'],
-                current: cfg.currency,
-                c: c,
-                onSelect: (v) => ref.read(configProvider.notifier).update(cfg.copyWith(currency: v)),
-              ),
-            ],
-          )),
+          _card(
+              c,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Theme',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: c.muted,
+                          fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 8),
+                  _SegRow(
+                    options: const ['ink', 'warm', 'dark'],
+                    current: cfg.theme,
+                    c: c,
+                    onSelect: (v) => ref
+                        .read(configProvider.notifier)
+                        .update(cfg.copyWith(theme: v)),
+                  ),
+                  const SizedBox(height: 14),
+                  Text('Density',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: c.muted,
+                          fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 8),
+                  _SegRow(
+                    options: const ['compact', 'regular', 'comfy'],
+                    current: cfg.density,
+                    c: c,
+                    onSelect: (v) => ref
+                        .read(configProvider.notifier)
+                        .update(cfg.copyWith(density: v)),
+                  ),
+                  const SizedBox(height: 14),
+                  Text('Currency format',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: c.muted,
+                          fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 8),
+                  _SegRow(
+                    options: const ['full', 'short'],
+                    labels: const ['Rp 12.596.000', 'Rp 12,6 jt'],
+                    current: cfg.currency,
+                    c: c,
+                    onSelect: (v) => ref
+                        .read(configProvider.notifier)
+                        .update(cfg.copyWith(currency: v)),
+                  ),
+                ],
+              )),
           const SizedBox(height: 18),
 
           // ── Sources ────────────────────────────────────────────
@@ -262,7 +331,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             const Spacer(),
             TextButton(
               onPressed: () => _openSourceEditor(),
-              child: Text('+ Add', style: TextStyle(color: c.accent, fontSize: 13)),
+              child: Text('+ Add',
+                  style: TextStyle(color: c.accent, fontSize: 13)),
             ),
           ]),
           const SizedBox(height: 10),
@@ -272,7 +342,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   source: s,
                   currency: cfg.currency,
                   onTap: () => _openSourceEditor(source: s),
-                  trailing: Icon(Icons.arrow_forward_ios_rounded, size: 14, color: c.muted),
+                  trailing: Icon(Icons.arrow_forward_ios_rounded,
+                      size: 14, color: c.muted),
                 ),
               )),
           const SizedBox(height: 18),
@@ -283,7 +354,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             const Spacer(),
             TextButton(
               onPressed: () => _openCategoryEditor(),
-              child: Text('+ Add', style: TextStyle(color: c.accent, fontSize: 13)),
+              child: Text('+ Add',
+                  style: TextStyle(color: c.accent, fontSize: 13)),
             ),
           ]),
           const SizedBox(height: 10),
@@ -299,7 +371,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     onTap: () => setState(() => _categoryFilter = kind),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 150),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 7),
                       decoration: BoxDecoration(
                         color: active ? c.ink : c.surface,
                         borderRadius: BorderRadius.circular(999),
@@ -326,7 +399,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Builder(builder: (_) {
             final filtered = _categoryFilter == 'all'
                 ? data.categories
-                : data.categories.where((cat) => cat.kind == _categoryFilter).toList();
+                : data.categories
+                    .where((cat) => cat.kind == _categoryFilter)
+                    .toList();
             if (filtered.isEmpty) {
               return Padding(
                 padding: const EdgeInsets.symmetric(vertical: 16),
@@ -339,13 +414,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               );
             }
             return Wrap(
-              spacing: 6, runSpacing: 6,
+              spacing: 6,
+              runSpacing: 6,
               children: filtered.map((cat) {
                 final color = catColor(cat.name);
                 return GestureDetector(
                   onTap: () => _openCategoryEditor(category: cat),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
                       color: c.surface,
                       borderRadius: BorderRadius.circular(999),
@@ -354,11 +431,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+                        Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                                color: color, shape: BoxShape.circle)),
                         const SizedBox(width: 6),
-                        Text(cat.name, style: TextStyle(fontSize: 13, color: c.ink)),
+                        Text(cat.name,
+                            style: TextStyle(fontSize: 13, color: c.ink)),
                         const SizedBox(width: 4),
-                        Text(cat.kind, style: TextStyle(fontSize: 11, color: c.muted)),
+                        Text(cat.kind,
+                            style: TextStyle(fontSize: 11, color: c.muted)),
                       ],
                     ),
                   ),
@@ -379,10 +462,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   style: OutlinedButton.styleFrom(
                     foregroundColor: c.ink,
                     side: BorderSide(color: c.line, width: 0.5),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
-                  child: const Text('Export all (JSON)', style: TextStyle(fontSize: 13)),
+                  child: const Text('Export all (JSON)',
+                      style: TextStyle(fontSize: 13)),
                 ),
               ),
               const SizedBox(width: 8),
@@ -392,10 +477,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   style: OutlinedButton.styleFrom(
                     foregroundColor: c.neg,
                     side: BorderSide(color: c.neg.withOpacity(0.3), width: 0.5),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
-                  child: const Text('Reset & re-seed', style: TextStyle(fontSize: 13)),
+                  child: const Text('Reset & re-seed',
+                      style: TextStyle(fontSize: 13)),
                 ),
               ),
             ],
@@ -424,8 +511,11 @@ class _SectionTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(text,
-        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600,
-            color: c.muted, letterSpacing: 0.06));
+        style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: c.muted,
+            letterSpacing: 0.06));
   }
 }
 
@@ -435,7 +525,12 @@ class _SegRow extends StatelessWidget {
   final String current;
   final AppColors c;
   final ValueChanged<String> onSelect;
-  const _SegRow({required this.options, this.labels, required this.current, required this.c, required this.onSelect});
+  const _SegRow(
+      {required this.options,
+      this.labels,
+      required this.current,
+      required this.c,
+      required this.onSelect});
 
   @override
   Widget build(BuildContext context) {
@@ -449,7 +544,8 @@ class _SegRow extends StatelessWidget {
       child: Row(
         children: List.generate(options.length, (i) {
           final opt = options[i];
-          final label = (labels != null && i < labels!.length) ? labels![i] : opt;
+          final label =
+              (labels != null && i < labels!.length) ? labels![i] : opt;
           final active = opt == current;
           return Expanded(
             child: GestureDetector(
@@ -460,13 +556,20 @@ class _SegRow extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: active ? c.surface2 : Colors.transparent,
                   borderRadius: BorderRadius.circular(9),
-                  boxShadow: active ? [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 3)] : null,
+                  boxShadow: active
+                      ? [
+                          BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 3)
+                        ]
+                      : null,
                 ),
                 child: Text(
                   label,
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w500,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
                     color: active ? c.ink : c.muted,
                   ),
                   overflow: TextOverflow.ellipsis,
@@ -505,18 +608,23 @@ class _SourceEditorSheetState extends ConsumerState<_SourceEditorSheet> {
   }
 
   @override
-  void dispose() { _nameCtl.dispose(); super.dispose(); }
+  void dispose() {
+    _nameCtl.dispose();
+    super.dispose();
+  }
 
   Future<void> _save() async {
     final name = _nameCtl.text.trim();
+    final userId = ref.read(configProvider).userId;
     if (widget.source == null) {
       if (name.isEmpty) return;
       final source = await Repo.instance.createSource(name, kind: _kind);
       // Remember the chosen kind locally - the API has no concept of it.
-      await AppDb.instance.putSource(source);
+      await AppDb.instance.putSource(source, userId);
     } else {
       // Name/kind aren't editable server-side; "kind" is a local-only label.
-      await AppDb.instance.putSource(widget.source!.copyWith(kind: _kind));
+      await AppDb.instance
+          .putSource(widget.source!.copyWith(kind: _kind), userId);
     }
     widget.onSaved();
     if (mounted) Navigator.pop(context);
@@ -525,11 +633,15 @@ class _SourceEditorSheetState extends ConsumerState<_SourceEditorSheet> {
   Future<void> _delete() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Delete source?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Delete')),
         ],
       ),
     );
@@ -543,7 +655,8 @@ class _SourceEditorSheetState extends ConsumerState<_SourceEditorSheet> {
   Widget build(BuildContext context) {
     final c = AppTheme.colorsOf(context);
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Container(
         padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
         child: Column(
@@ -551,9 +664,11 @@ class _SourceEditorSheetState extends ConsumerState<_SourceEditorSheet> {
           children: [
             Row(children: [
               Text(widget.source != null ? 'Edit source' : 'Add source',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: c.ink)),
+                  style: TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.w600, color: c.ink)),
               const Spacer(),
-              GestureDetector(onTap: () => Navigator.pop(context),
+              GestureDetector(
+                  onTap: () => Navigator.pop(context),
                   child: Icon(Icons.close, color: c.muted)),
             ]),
             const SizedBox(height: 16),
@@ -563,15 +678,21 @@ class _SourceEditorSheetState extends ConsumerState<_SourceEditorSheet> {
               style: TextStyle(color: c.ink),
               decoration: InputDecoration(
                 labelText: 'Name',
-                helperText: widget.source != null ? "Name can't be changed once created" : null,
+                helperText: widget.source != null
+                    ? "Name can't be changed once created"
+                    : null,
               ),
             ),
             const SizedBox(height: 14),
             DropdownButtonFormField<String>(
               value: _kind,
               decoration: const InputDecoration(labelText: 'Kind'),
-              items: _kinds.map((k) => DropdownMenuItem(value: k, child: Text(k))).toList(),
-              onChanged: (v) { if (v != null) setState(() => _kind = v); },
+              items: _kinds
+                  .map((k) => DropdownMenuItem(value: k, child: Text(k)))
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) setState(() => _kind = v);
+              },
             ),
             const SizedBox(height: 20),
             Row(children: [
@@ -583,8 +704,11 @@ class _SourceEditorSheetState extends ConsumerState<_SourceEditorSheet> {
               const Spacer(),
               ElevatedButton(
                 onPressed: _save,
-                style: ElevatedButton.styleFrom(backgroundColor: c.ink, foregroundColor: c.bg,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: c.ink,
+                    foregroundColor: c.bg,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12))),
                 child: const Text('Save'),
               ),
             ]),
@@ -602,7 +726,8 @@ class _CategoryEditorSheet extends ConsumerStatefulWidget {
   const _CategoryEditorSheet({this.category, required this.onSaved});
 
   @override
-  ConsumerState<_CategoryEditorSheet> createState() => _CategoryEditorSheetState();
+  ConsumerState<_CategoryEditorSheet> createState() =>
+      _CategoryEditorSheetState();
 }
 
 class _CategoryEditorSheetState extends ConsumerState<_CategoryEditorSheet> {
@@ -619,7 +744,10 @@ class _CategoryEditorSheetState extends ConsumerState<_CategoryEditorSheet> {
   }
 
   @override
-  void dispose() { _nameCtl.dispose(); super.dispose(); }
+  void dispose() {
+    _nameCtl.dispose();
+    super.dispose();
+  }
 
   Future<void> _save() async {
     final name = _nameCtl.text.trim();
@@ -632,16 +760,21 @@ class _CategoryEditorSheetState extends ConsumerState<_CategoryEditorSheet> {
   Future<void> _delete() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Delete category?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Delete')),
         ],
       ),
     );
     if (confirmed != true || !mounted) return;
-    await Repo.instance.deleteCategory(id: widget.category!.id, kind: widget.category!.kind);
+    await Repo.instance
+        .deleteCategory(id: widget.category!.id, kind: widget.category!.kind);
     widget.onSaved();
     if (mounted) Navigator.pop(context);
   }
@@ -650,7 +783,8 @@ class _CategoryEditorSheetState extends ConsumerState<_CategoryEditorSheet> {
   Widget build(BuildContext context) {
     final c = AppTheme.colorsOf(context);
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Container(
         padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
         child: Column(
@@ -658,9 +792,11 @@ class _CategoryEditorSheetState extends ConsumerState<_CategoryEditorSheet> {
           children: [
             Row(children: [
               Text(widget.category != null ? 'Edit category' : 'Add category',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: c.ink)),
+                  style: TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.w600, color: c.ink)),
               const Spacer(),
-              GestureDetector(onTap: () => Navigator.pop(context),
+              GestureDetector(
+                  onTap: () => Navigator.pop(context),
                   child: Icon(Icons.close, color: c.muted)),
             ]),
             const SizedBox(height: 16),
@@ -670,7 +806,9 @@ class _CategoryEditorSheetState extends ConsumerState<_CategoryEditorSheet> {
               style: TextStyle(color: c.ink),
               decoration: InputDecoration(
                 labelText: 'Name',
-                helperText: widget.category != null ? "Categories can't be renamed once created" : null,
+                helperText: widget.category != null
+                    ? "Categories can't be renamed once created"
+                    : null,
               ),
             ),
             const SizedBox(height: 14),
@@ -681,7 +819,11 @@ class _CategoryEditorSheetState extends ConsumerState<_CategoryEditorSheet> {
                 DropdownMenuItem(value: 'spending', child: Text('spending')),
                 DropdownMenuItem(value: 'earning', child: Text('earning')),
               ],
-              onChanged: widget.category != null ? null : (v) { if (v != null) setState(() => _kind = v); },
+              onChanged: widget.category != null
+                  ? null
+                  : (v) {
+                      if (v != null) setState(() => _kind = v);
+                    },
             ),
             const SizedBox(height: 20),
             Row(children: [
@@ -694,8 +836,11 @@ class _CategoryEditorSheetState extends ConsumerState<_CategoryEditorSheet> {
               if (widget.category == null)
                 ElevatedButton(
                   onPressed: _save,
-                  style: ElevatedButton.styleFrom(backgroundColor: c.ink, foregroundColor: c.bg,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: c.ink,
+                      foregroundColor: c.bg,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12))),
                   child: const Text('Save'),
                 ),
             ]),

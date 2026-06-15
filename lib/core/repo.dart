@@ -25,26 +25,33 @@ class Repo {
 
   AppConfig get _cfg => ConfigService.instance.current;
 
+  /// Scopes the local SQLite cache to the signed-in user. An empty string
+  /// (logged out) maps to the seeded/demo data set.
+  String get _userId => _cfg.userId;
+
   // ── Aggregate read ───────────────────────────────────────────────────
   Future<AppData> all() async {
     final cfg = _cfg;
-    if (cfg.isConfigured && SyncService.instance.isOnline) {
+    if (cfg.isLoggedIn && SyncService.instance.isOnline) {
       try {
         final data = await _fetchRemote(cfg);
-        await _cacheRemote(data);
-        return _withPending(data);
+        await _cacheRemote(data, cfg.userId);
+        return _withPending(data, cfg.userId);
+      } on ApiUnauthorizedException {
+        // The JWT is missing/expired - sign out so the UI routes to /login.
+        await ConfigService.instance.logout();
       } catch (_) {
         // fall back to local cache below
       }
     }
-    return _fromCache();
+    return _fromCache(cfg.userId);
   }
 
   /// Merges transactions still queued in "local mode" into freshly-fetched
   /// remote [data] so they remain visible until [syncPendingTransactions]
   /// pushes them.
-  Future<AppData> _withPending(AppData data) async {
-    final pending = await AppDb.instance.getPendingTransactions();
+  Future<AppData> _withPending(AppData data, String userId) async {
+    final pending = await AppDb.instance.getPendingTransactions(userId);
     if (pending.isEmpty) return data;
     final transactions = [...pending, ...data.transactions]
       ..sort((a, b) => b.date.compareTo(a.date));
@@ -58,14 +65,14 @@ class Repo {
     );
   }
 
-  Future<AppData> _fromCache() async {
+  Future<AppData> _fromCache(String userId) async {
     final results = await Future.wait([
-      AppDb.instance.getSources(),
-      AppDb.instance.getCategories(),
-      AppDb.instance.getTransactions(),
-      AppDb.instance.getInsulinItems(),
-      AppDb.instance.getInsulinAssigns(),
-      AppDb.instance.getInsulinUsages(),
+      AppDb.instance.getSources(userId),
+      AppDb.instance.getCategories(userId),
+      AppDb.instance.getTransactions(userId),
+      AppDb.instance.getInsulinItems(userId),
+      AppDb.instance.getInsulinAssigns(userId),
+      AppDb.instance.getInsulinUsages(userId),
     ]);
     return AppData(
       sources: results[0] as List<Source>,
@@ -105,7 +112,7 @@ class Repo {
     }
 
     final existingKinds = {
-      for (final s in await AppDb.instance.getSources()) s.id: s.kind,
+      for (final s in await AppDb.instance.getSources(cfg.userId)) s.id: s.kind,
     };
 
     final sources = rawSources.map((m) {
@@ -136,7 +143,8 @@ class Repo {
           )),
     ];
 
-    final transactions = _pairTransfers(rawEarnings, rawSpendings, transferCategoryName);
+    final transactions =
+        _pairTransfers(rawEarnings, rawSpendings, transferCategoryName);
 
     var insulinItems = <InsulinItem>[];
     var insulinAssigns = <InsulinAssign>[];
@@ -151,7 +159,7 @@ class Repo {
       // health-api may be unreachable independently of transaction-api
     }
 
-    final insulinUsages = await AppDb.instance.getInsulinUsages();
+    final insulinUsages = await AppDb.instance.getInsulinUsages(cfg.userId);
 
     return AppData(
       sources: sources,
@@ -187,11 +195,14 @@ class Repo {
           if (usedEarnings.contains(ei)) continue;
           final e = earnings[ei];
           if (e['earning_category'] != transferCategoryName) continue;
-          if ((e['total_amount'] as num).toDouble() != (s['total_amount'] as num).toDouble()) continue;
+          if ((e['total_amount'] as num).toDouble() !=
+              (s['total_amount'] as num).toDouble()) continue;
           if (e['description'] != s['description']) continue;
           final ed = DateTime.tryParse(e['created_date']?.toString() ?? '');
           final sd = DateTime.tryParse(s['created_date']?.toString() ?? '');
-          final diff = (ed != null && sd != null) ? ed.difference(sd).abs() : Duration.zero;
+          final diff = (ed != null && sd != null)
+              ? ed.difference(sd).abs()
+              : Duration.zero;
           if (bestDiff == null || diff < bestDiff) {
             bestDiff = diff;
             bestIdx = ei;
@@ -252,12 +263,12 @@ class Repo {
     return txns;
   }
 
-  Future<void> _cacheRemote(AppData data) async {
-    await AppDb.instance.replaceSources(data.sources);
-    await AppDb.instance.replaceCategories(data.categories);
-    await AppDb.instance.replaceTransactions(data.transactions);
-    await AppDb.instance.replaceInsulinItems(data.insulinItems);
-    await AppDb.instance.replaceInsulinAssigns(data.insulinAssigns);
+  Future<void> _cacheRemote(AppData data, String userId) async {
+    await AppDb.instance.replaceSources(data.sources, userId);
+    await AppDb.instance.replaceCategories(data.categories, userId);
+    await AppDb.instance.replaceTransactions(data.transactions, userId);
+    await AppDb.instance.replaceInsulinItems(data.insulinItems, userId);
+    await AppDb.instance.replaceInsulinAssigns(data.insulinAssigns, userId);
     await AppDb.instance.setMeta('lastSync', _nowIso());
   }
 
@@ -276,7 +287,8 @@ class Repo {
   Future<void> deleteSource(String id) => RemoteApi(_cfg).deleteSource(id);
 
   // ── Categories ───────────────────────────────────────────────────────
-  Future<Category> createCategory({required String name, required String kind}) async {
+  Future<Category> createCategory(
+      {required String name, required String kind}) async {
     final api = RemoteApi(_cfg);
     final m = kind == 'earning'
         ? await api.createEarningCategory(name)
@@ -292,7 +304,9 @@ class Repo {
 
   Future<void> deleteCategory({required String id, required String kind}) {
     final api = RemoteApi(_cfg);
-    return kind == 'earning' ? api.deleteEarningCategory(id) : api.deleteSpendingCategory(id);
+    return kind == 'earning'
+        ? api.deleteEarningCategory(id)
+        : api.deleteSpendingCategory(id);
   }
 
   // ── Transactions (create-only; the APIs have no edit/delete) ─────────
@@ -380,11 +394,14 @@ class Repo {
       String catId = '';
       String catName = 'Transfer';
       for (final s in settings) {
-        if (s['app_setting_key'] == 'TRANSFER_CATEGORY_ID') catId = s['app_setting_value'] as String? ?? '';
-        if (s['app_setting_key'] == 'TRANSFER_CATEGORY_NAME') catName = s['app_setting_value'] as String? ?? catName;
+        if (s['app_setting_key'] == 'TRANSFER_CATEGORY_ID')
+          catId = s['app_setting_value'] as String? ?? '';
+        if (s['app_setting_key'] == 'TRANSFER_CATEGORY_NAME')
+          catName = s['app_setting_value'] as String? ?? catName;
       }
       if (catId.isEmpty) {
-        throw const ApiException('Transfer category is not configured on the server.');
+        throw const ApiException(
+            'Transfer category is not configured on the server.');
       }
       await remote.createSpending(
         totalAmount: amount,
@@ -420,8 +437,8 @@ class Repo {
   }
 
   Future<void> _queuePending(Transaction t) async {
-    await AppDb.instance.putTransaction(t);
-    final pending = await AppDb.instance.getPendingTransactions();
+    await AppDb.instance.putTransaction(t, _userId);
+    final pending = await AppDb.instance.getPendingTransactions(_userId);
     SyncService.instance.updatePendingCount(pending.length);
   }
 
@@ -433,22 +450,23 @@ class Repo {
   /// follow-up `onRefresh` (triggered by [SyncService]) re-fetches them from
   /// the server with their real ids.
   Future<void> syncPendingTransactions() async {
-    final pending = await AppDb.instance.getPendingTransactions();
+    final cfg = _cfg;
+    final pending = await AppDb.instance.getPendingTransactions(cfg.userId);
     if (pending.isEmpty) {
       SyncService.instance.updatePendingCount(0);
       return;
     }
 
-    final cfg = _cfg;
     final remote = RemoteApi(cfg);
-    final sources = await AppDb.instance.getSources();
-    final categories = await AppDb.instance.getCategories();
+    final sources = await AppDb.instance.getSources(cfg.userId);
+    final categories = await AppDb.instance.getCategories(cfg.userId);
 
     for (final t in pending) {
       try {
         switch (t.type) {
           case 'earning':
-            final cat = categories.firstWhere((c) => c.kind == 'earning' && c.name == t.category);
+            final cat = categories
+                .firstWhere((c) => c.kind == 'earning' && c.name == t.category);
             final src = sources.firstWhere((s) => s.name == t.source);
             await remote.createEarning(
               totalAmount: t.amount,
@@ -460,7 +478,8 @@ class Repo {
             );
             break;
           case 'spending':
-            final cat = categories.firstWhere((c) => c.kind == 'spending' && c.name == t.category);
+            final cat = categories.firstWhere(
+                (c) => c.kind == 'spending' && c.name == t.category);
             final src = sources.firstWhere((s) => s.name == t.source);
             await remote.createSpending(
               totalAmount: t.amount,
@@ -478,11 +497,14 @@ class Repo {
             String catId = '';
             String catName = 'Transfer';
             for (final s in settings) {
-              if (s['app_setting_key'] == 'TRANSFER_CATEGORY_ID') catId = s['app_setting_value'] as String? ?? '';
-              if (s['app_setting_key'] == 'TRANSFER_CATEGORY_NAME') catName = s['app_setting_value'] as String? ?? catName;
+              if (s['app_setting_key'] == 'TRANSFER_CATEGORY_ID')
+                catId = s['app_setting_value'] as String? ?? '';
+              if (s['app_setting_key'] == 'TRANSFER_CATEGORY_NAME')
+                catName = s['app_setting_value'] as String? ?? catName;
             }
             if (catId.isEmpty) {
-              throw const ApiException('Transfer category is not configured on the server.');
+              throw const ApiException(
+                  'Transfer category is not configured on the server.');
             }
             await remote.createSpending(
               totalAmount: t.amount,
@@ -502,7 +524,7 @@ class Repo {
             );
             break;
         }
-        await AppDb.instance.deleteTransaction(t.id);
+        await AppDb.instance.deleteTransaction(t.id, cfg.userId);
       } on ApiUnavailableException {
         break;
       } catch (_) {
@@ -510,7 +532,7 @@ class Repo {
       }
     }
 
-    final remaining = await AppDb.instance.getPendingTransactions();
+    final remaining = await AppDb.instance.getPendingTransactions(cfg.userId);
     SyncService.instance.updatePendingCount(remaining.length);
   }
 
@@ -521,7 +543,8 @@ class Repo {
     required String uom,
     String? notes,
   }) async {
-    final m = await RemoteApi(_cfg).createInsulinItem(name: name, units: units, uom: uom, notes: notes);
+    final m = await RemoteApi(_cfg)
+        .createInsulinItem(name: name, units: units, uom: uom, notes: notes);
     return InsulinItem.fromMap(m);
   }
 
@@ -530,20 +553,23 @@ class Repo {
     required String batchNo,
     String? notes,
   }) async {
-    final m = await RemoteApi(_cfg).createInsulinAssign(insulinItemId: itemId, batchNo: batchNo, notes: notes);
+    final m = await RemoteApi(_cfg).createInsulinAssign(
+        insulinItemId: itemId, batchNo: batchNo, notes: notes);
     return InsulinAssign.fromMap(m);
   }
 
-  Future<void> deleteInsulinAssign(String id) => RemoteApi(_cfg).deleteInsulinAssign(id);
+  Future<void> deleteInsulinAssign(String id) =>
+      RemoteApi(_cfg).deleteInsulinAssign(id);
 
   Future<InsulinUsage> logInsulinUsage({
     required String assignId,
     required double units,
     String? notes,
   }) async {
-    final m = await RemoteApi(_cfg).createInsulinUsage(insulinAssignId: assignId, units: units, notes: notes);
+    final m = await RemoteApi(_cfg).createInsulinUsage(
+        insulinAssignId: assignId, units: units, notes: notes);
     final usage = InsulinUsage.fromMap(m);
-    await AppDb.instance.putInsulinUsage(usage);
+    await AppDb.instance.putInsulinUsage(usage, _userId);
     return usage;
   }
 }

@@ -10,6 +10,7 @@ import 'screens/category_detail_screen.dart';
 import 'screens/reports_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/insulin_screen.dart';
+import 'screens/login_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/api_log_screen.dart';
 import 'theme/app_theme.dart';
@@ -19,22 +20,31 @@ import 'core/config.dart';
 final _rootKey  = GlobalKey<NavigatorState>();
 final _shellKey = GlobalKey<NavigatorState>();
 
+final _configListenable = ConfigListenable();
+
 final _router = GoRouter(
   navigatorKey: _rootKey,
   initialLocation: '/',
+  refreshListenable: _configListenable,
   redirect: (context, state) {
     final cfg = ConfigService.instance.current;
-    if (!cfg.isConfigured && state.matchedLocation != '/onboarding') {
-      return '/onboarding';
+    final loc = state.matchedLocation;
+    final isAuthRoute = loc == '/login' || loc == '/server-settings';
+    if (!cfg.isLoggedIn && !isAuthRoute) {
+      return '/login';
     }
-    if (cfg.isConfigured && state.matchedLocation == '/onboarding') {
+    if (cfg.isLoggedIn && loc == '/login') {
       return '/';
     }
     return null;
   },
   routes: [
     GoRoute(
-      path: '/onboarding',
+      path: '/login',
+      builder: (c, s) => const LoginScreen(),
+    ),
+    GoRoute(
+      path: '/server-settings',
       builder: (c, s) => const OnboardingScreen(),
     ),
     ShellRoute(

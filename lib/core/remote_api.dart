@@ -25,15 +25,22 @@ class ApiUnavailableException extends ApiException {
   const ApiUnavailableException(super.message);
 }
 
-/// Thin REST client for the real `/api/user/{created_by}/...` endpoints
-/// exposed by transaction-api and health-api. Neither service validates a
-/// token on these routes — `created_by` is just a path segment, so the
-/// configured username is used directly as the user identifier.
+/// Thrown when transaction-api / health-api reject the request with `401`
+/// because the Bearer token is missing, malformed, invalid, or expired.
+/// Repo treats this as "the login session is gone" and signs the user out
+/// so the UI routes back to `/login`.
+class ApiUnauthorizedException extends ApiException {
+  const ApiUnauthorizedException(super.message);
+}
+
+/// Thin REST client for:
+///  - login-api's `/api/auth/...` endpoints (register/login/validate/me)
+///  - transaction-api / health-api's JWT-protected `/api/user/...` and
+///    `/api/flutter/...` endpoints, which derive `created_by` from the
+///    `Authorization: Bearer <token>` header rather than a path segment.
 class RemoteApi {
   final AppConfig cfg;
   const RemoteApi(this.cfg);
-
-  String get _createdBy => Uri.encodeComponent(cfg.username.trim());
 
   String _trim(String base) => base.replaceAll(RegExp(r'/+$'), '');
 
@@ -42,12 +49,22 @@ class RemoteApi {
       for (final e in (query ?? const {}).entries)
         if (e.value != null) e.key: e.value.toString(),
     };
-    return Uri.parse('${_trim(cfg.apiBase)}/api/user/$_createdBy$path')
+    return Uri.parse('${_trim(cfg.apiBase)}/api/user$path')
         .replace(queryParameters: clean.isNotEmpty ? clean : null);
   }
 
   Uri _healthUri(String path) =>
-      Uri.parse('${_trim(cfg.healthBase)}/api/user/$_createdBy$path');
+      Uri.parse('${_trim(cfg.healthBase)}/api/user$path');
+
+  Uri _authUri(String path) =>
+      Uri.parse('${_trim(cfg.loginBase)}/api/auth$path');
+
+  /// Headers sent with every request. Includes the login-api JWT, when
+  /// present, so transaction-api / health-api can resolve `created_by`.
+  Map<String, String> _headers() => {
+        'content-type': 'application/json',
+        if (cfg.authToken.trim().isNotEmpty) 'Authorization': 'Bearer ${cfg.authToken.trim()}',
+      };
 
   // ── Low-level helpers ──────────────────────────────────────────────────
   dynamic _unwrap(http.Response res) {
@@ -63,6 +80,7 @@ class RemoteApi {
       final msg = body?['description']?.toString().isNotEmpty == true
           ? body!['description'].toString()
           : (body?['message']?.toString() ?? 'HTTP ${res.statusCode}');
+      if (res.statusCode == 401) throw ApiUnauthorizedException(msg);
       throw ApiException(msg);
     }
     if (body == null) return null;
@@ -79,6 +97,7 @@ class RemoteApi {
   /// easy to confirm whether the app is actually hitting the APIs.
   Future<dynamic> _send(String method, Uri uri, Future<http.Response> Function() request, [Object? body]) async {
     developer.log('→ $method $uri${body != null ? ' $body' : ''}', name: 'RemoteApi');
+    final requestBody = body != null ? jsonEncode(body) : null;
     final sw = Stopwatch()..start();
     http.Response res;
     try {
@@ -91,6 +110,7 @@ class RemoteApi {
         uri: uri,
         duration: sw.elapsed,
         error: 'Timed out after ${_requestTimeout.inSeconds}s',
+        requestBody: requestBody,
       ));
       throw ApiUnavailableException('Request timed out: $method $uri');
     } catch (e) {
@@ -101,6 +121,7 @@ class RemoteApi {
         uri: uri,
         duration: sw.elapsed,
         error: e.toString(),
+        requestBody: requestBody,
       ));
       // Connection refused / DNS failure / etc. - the API is unreachable,
       // not just returning an error, so treat the same as a timeout.
@@ -113,23 +134,60 @@ class RemoteApi {
       uri: uri,
       duration: sw.elapsed,
       statusCode: res.statusCode,
+      requestBody: requestBody,
+      responseBody: res.body.isEmpty ? null : res.body,
     ));
     return _unwrap(res);
   }
 
-  Future<dynamic> _get(Uri uri) => _send('GET', uri, () => http.get(uri));
+  Future<dynamic> _get(Uri uri) => _send('GET', uri, () => http.get(uri, headers: _headers()));
 
   Future<dynamic> _post(Uri uri, Map<String, dynamic> body) => _send(
         'POST',
         uri,
-        () => http.post(uri, headers: {'content-type': 'application/json'}, body: jsonEncode(body)),
+        () => http.post(uri, headers: _headers(), body: jsonEncode(body)),
         body,
       );
 
-  Future<void> _delete(Uri uri) => _send('DELETE', uri, () => http.delete(uri));
+  Future<void> _delete(Uri uri) => _send('DELETE', uri, () => http.delete(uri, headers: _headers()));
 
   List<Map<String, dynamic>> _list(dynamic data) =>
       (data as List? ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+
+  // ── login-api: auth ─────────────────────────────────────────────────────
+  /// `POST /api/auth/register`. Returns the created user's profile (no
+  /// token - call [login] afterwards to obtain one).
+  Future<Map<String, dynamic>> register({
+    required String username,
+    required String password,
+    String? email,
+    String? phoneNumber,
+    String? telegramUsername,
+  }) async =>
+      Map<String, dynamic>.from(await _post(_authUri('/register'), {
+        'username': username,
+        'password': password,
+        'email': email,
+        'phone_number': phoneNumber,
+        'telegram_username': telegramUsername,
+      }) as Map);
+
+  /// `POST /api/auth/login`. Returns an [AuthResponse]-shaped map containing
+  /// `token`, `token_type`, `expires_in`, `username`, `user_id`, `email`,
+  /// `phone_number`, and `telegram_username`.
+  Future<Map<String, dynamic>> login({
+    required String username,
+    required String password,
+  }) async =>
+      Map<String, dynamic>.from(await _post(_authUri('/login'), {
+        'username': username,
+        'password': password,
+      }) as Map);
+
+  /// `GET /api/auth/me`. Requires [cfg.authToken] to be set. Useful to
+  /// confirm a stored token is still valid and refresh the cached profile.
+  Future<Map<String, dynamic>> me() async =>
+      Map<String, dynamic>.from(await _get(_authUri('/me')) as Map);
 
   // ── transaction-api: settings ──────────────────────────────────────────
   Future<List<Map<String, dynamic>>> getSettings() async =>

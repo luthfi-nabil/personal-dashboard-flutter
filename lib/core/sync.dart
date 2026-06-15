@@ -45,7 +45,8 @@ class SyncService {
 
   final _pendingListeners = <void Function(int)>[];
   void addPendingListener(void Function(int) l) => _pendingListeners.add(l);
-  void removePendingListener(void Function(int) l) => _pendingListeners.remove(l);
+  void removePendingListener(void Function(int) l) =>
+      _pendingListeners.remove(l);
 
   /// Called by [Repo] whenever a transaction is queued or flushed locally.
   void updatePendingCount(int count) {
@@ -67,24 +68,31 @@ class SyncService {
     ConfigService.instance.addListener(_restartTimer);
     _restartTimer();
 
-    final pending = await AppDb.instance.getPendingTransactions();
-    updatePendingCount(pending.length);
+    await _refreshPendingCount(ConfigService.instance.current.userId);
     if (_pendingCount > 0 && _online) syncNow();
   }
 
   void _restartTimer() {
     _timer?.cancel();
     final cfg = ConfigService.instance.current;
-    if (!cfg.isConfigured || !cfg.autoSync) return;
+    _refreshPendingCount(cfg.userId);
+    if (!cfg.isLoggedIn || !cfg.autoSync) return;
     _timer = Timer.periodic(Duration(seconds: cfg.syncIntervalSec), (_) {
       if (_online) syncNow();
     });
   }
 
+  Future<void> _refreshPendingCount(String userId) async {
+    final pending = await AppDb.instance.getPendingTransactions(userId);
+    if (ConfigService.instance.current.userId == userId) {
+      updatePendingCount(pending.length);
+    }
+  }
+
   Future<void> syncNow() async {
     if (_status == SyncStatus.syncing) return;
     final cfg = ConfigService.instance.current;
-    if (!cfg.isConfigured || !_online) return;
+    if (!cfg.isLoggedIn || !_online) return;
 
     _emit(SyncStatus.syncing);
     try {
