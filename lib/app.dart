@@ -9,7 +9,7 @@ import 'screens/source_detail_screen.dart';
 import 'screens/category_detail_screen.dart';
 import 'screens/reports_screen.dart';
 import 'screens/settings_screen.dart';
-import 'screens/insulin_screen.dart';
+import 'screens/insulin_shell.dart';
 import 'screens/login_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/api_log_screen.dart';
@@ -17,7 +17,7 @@ import 'theme/app_theme.dart';
 import 'providers/providers.dart';
 import 'core/config.dart';
 
-final _rootKey  = GlobalKey<NavigatorState>();
+final _rootKey = GlobalKey<NavigatorState>();
 final _shellKey = GlobalKey<NavigatorState>();
 
 final _configListenable = ConfigListenable();
@@ -52,11 +52,37 @@ final _router = GoRouter(
       builder: (context, state, child) => MainShell(child: child),
       routes: [
         GoRoute(path: '/', builder: (c, s) => const DashboardScreen()),
-        GoRoute(path: '/transactions', builder: (c, s) => const TransactionsScreen()),
+        GoRoute(
+            path: '/transactions',
+            builder: (c, s) => const TransactionsScreen()),
         GoRoute(path: '/reports', builder: (c, s) => const ReportsScreen()),
-        GoRoute(path: '/insulin', builder: (c, s) => const InsulinScreen()),
         GoRoute(path: '/settings', builder: (c, s) => const SettingsScreen()),
+        GoRoute(path: '/api-log', builder: (c, s) => const ApiLogScreen()),
       ],
+    ),
+    GoRoute(
+      path: '/insulin',
+      builder: (c, s) => const InsulinPage(view: InsulinPageView.home),
+    ),
+    GoRoute(
+      path: '/insulin/activity',
+      builder: (c, s) => const InsulinPage(view: InsulinPageView.activity),
+    ),
+    GoRoute(
+      path: '/insulin/reports',
+      builder: (c, s) => const InsulinPage(view: InsulinPageView.reports),
+    ),
+    GoRoute(
+      path: '/insulin/add-usage',
+      builder: (c, s) => const InsulinAddPage(kind: InsulinAddKind.usage),
+    ),
+    GoRoute(
+      path: '/insulin/add-type',
+      builder: (c, s) => const InsulinAddPage(kind: InsulinAddKind.type),
+    ),
+    GoRoute(
+      path: '/insulin/add-batch',
+      builder: (c, s) => const InsulinAddPage(kind: InsulinAddKind.assign),
     ),
     GoRoute(
       parentNavigatorKey: _rootKey,
@@ -79,11 +105,6 @@ final _router = GoRouter(
       path: '/category/:name',
       builder: (c, s) => CategoryDetailScreen(
           name: Uri.decodeComponent(s.pathParameters['name']!)),
-    ),
-    GoRoute(
-      parentNavigatorKey: _rootKey,
-      path: '/api-log',
-      builder: (c, s) => const ApiLogScreen(),
     ),
   ],
 );

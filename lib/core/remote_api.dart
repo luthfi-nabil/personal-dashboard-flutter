@@ -63,7 +63,8 @@ class RemoteApi {
   /// present, so transaction-api / health-api can resolve `created_by`.
   Map<String, String> _headers() => {
         'content-type': 'application/json',
-        if (cfg.authToken.trim().isNotEmpty) 'Authorization': 'Bearer ${cfg.authToken.trim()}',
+        if (cfg.authToken.trim().isNotEmpty)
+          'Authorization': 'Bearer ${cfg.authToken.trim()}',
       };
 
   // ── Low-level helpers ──────────────────────────────────────────────────
@@ -95,15 +96,19 @@ class RemoteApi {
   /// Logs every outgoing request and its outcome under the 'RemoteApi' tag
   /// (visible in the `flutter run` console / DevTools logging view) so it's
   /// easy to confirm whether the app is actually hitting the APIs.
-  Future<dynamic> _send(String method, Uri uri, Future<http.Response> Function() request, [Object? body]) async {
-    developer.log('→ $method $uri${body != null ? ' $body' : ''}', name: 'RemoteApi');
+  Future<dynamic> _send(
+      String method, Uri uri, Future<http.Response> Function() request,
+      [Object? body]) async {
+    developer.log('→ $method $uri${body != null ? ' $body' : ''}',
+        name: 'RemoteApi');
     final requestBody = body != null ? jsonEncode(body) : null;
     final sw = Stopwatch()..start();
     http.Response res;
     try {
       res = await request().timeout(_requestTimeout);
     } on TimeoutException {
-      developer.log('✗ $method $uri timed out after $_requestTimeout', name: 'RemoteApi', level: 1000);
+      developer.log('✗ $method $uri timed out after $_requestTimeout',
+          name: 'RemoteApi', level: 1000);
       ApiCallLog.instance.add(ApiCallEntry(
         time: DateTime.now(),
         method: method,
@@ -114,7 +119,8 @@ class RemoteApi {
       ));
       throw ApiUnavailableException('Request timed out: $method $uri');
     } catch (e) {
-      developer.log('✗ $method $uri failed: $e', name: 'RemoteApi', level: 1000);
+      developer.log('✗ $method $uri failed: $e',
+          name: 'RemoteApi', level: 1000);
       ApiCallLog.instance.add(ApiCallEntry(
         time: DateTime.now(),
         method: method,
@@ -140,7 +146,8 @@ class RemoteApi {
     return _unwrap(res);
   }
 
-  Future<dynamic> _get(Uri uri) => _send('GET', uri, () => http.get(uri, headers: _headers()));
+  Future<dynamic> _get(Uri uri) =>
+      _send('GET', uri, () => http.get(uri, headers: _headers()));
 
   Future<dynamic> _post(Uri uri, Map<String, dynamic> body) => _send(
         'POST',
@@ -149,10 +156,12 @@ class RemoteApi {
         body,
       );
 
-  Future<void> _delete(Uri uri) => _send('DELETE', uri, () => http.delete(uri, headers: _headers()));
+  Future<void> _delete(Uri uri) =>
+      _send('DELETE', uri, () => http.delete(uri, headers: _headers()));
 
-  List<Map<String, dynamic>> _list(dynamic data) =>
-      (data as List? ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  List<Map<String, dynamic>> _list(dynamic data) => (data as List? ?? [])
+      .map((e) => Map<String, dynamic>.from(e as Map))
+      .toList();
 
   // ── login-api: auth ─────────────────────────────────────────────────────
   /// `POST /api/auth/register`. Returns the created user's profile (no
@@ -201,7 +210,8 @@ class RemoteApi {
       _list(await _get(_txnUri('/source-balance')));
 
   Future<Map<String, dynamic>> createSource(String name) async =>
-      Map<String, dynamic>.from(await _post(_txnUri('/source'), {'source': name}) as Map);
+      Map<String, dynamic>.from(
+          await _post(_txnUri('/source'), {'source': name}) as Map);
 
   Future<void> deleteSource(String sourceId) async =>
       _delete(_txnUri('/source/$sourceId'));
@@ -211,8 +221,8 @@ class RemoteApi {
       _list(await _get(_txnUri('/earning-categories')));
 
   Future<Map<String, dynamic>> createEarningCategory(String name) async =>
-      Map<String, dynamic>.from(
-          await _post(_txnUri('/earning-categories'), {'earning_category': name}) as Map);
+      Map<String, dynamic>.from(await _post(
+          _txnUri('/earning-categories'), {'earning_category': name}) as Map);
 
   Future<void> deleteEarningCategory(String id) async =>
       _delete(_txnUri('/earning-categories/$id'));
@@ -222,8 +232,8 @@ class RemoteApi {
       _list(await _get(_txnUri('/spending-categories')));
 
   Future<Map<String, dynamic>> createSpendingCategory(String name) async =>
-      Map<String, dynamic>.from(
-          await _post(_txnUri('/spending-categories'), {'spending_category': name}) as Map);
+      Map<String, dynamic>.from(await _post(
+          _txnUri('/spending-categories'), {'spending_category': name}) as Map);
 
   Future<void> deleteSpendingCategory(String id) async =>
       _delete(_txnUri('/spending-categories/$id'));
@@ -306,6 +316,9 @@ class RemoteApi {
       _delete(_healthUri('/insulin-assign/$id'));
 
   // ── health-api: insulin usage ──────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getInsulinUsages() async =>
+      _list(await _get(_healthUri('/insulin-usage')));
+
   Future<Map<String, dynamic>> createInsulinUsage({
     required String insulinAssignId,
     required double units,

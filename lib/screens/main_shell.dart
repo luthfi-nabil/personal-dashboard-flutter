@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../theme/app_theme.dart';
 import '../providers/providers.dart';
 import '../core/sync.dart';
+import '../widgets/app_menu_drawer.dart';
 
 class MainShell extends ConsumerWidget {
   final Widget child;
@@ -15,39 +16,59 @@ class MainShell extends ConsumerWidget {
     final location = GoRouterState.of(context).uri.path;
     final syncStatus = ref.watch(syncStatusProvider);
     final pendingCount = ref.watch(pendingSyncCountProvider);
+    final username = ref.watch(configProvider.select((cfg) => cfg.username));
 
-    int currentIndex = 0;
-    if (location.startsWith('/transactions')) currentIndex = 1;
-    else if (location.startsWith('/insulin'))      currentIndex = 2;
-    else if (location.startsWith('/reports'))      currentIndex = 3;
-    else if (location.startsWith('/settings'))     currentIndex = 4;
+    int currentIndex = -1;
+    if (location == '/') {
+      currentIndex = 0;
+    } else if (location.startsWith('/transactions')) {
+      currentIndex = 1;
+    } else if (location.startsWith('/reports')) {
+      currentIndex = 2;
+    }
 
     return Scaffold(
       backgroundColor: c.bg,
+      drawer: AppMenuDrawer(currentPath: location),
       body: Column(
         children: [
-          _TopBar(syncStatus: syncStatus, pendingCount: pendingCount, c: c),
+          _TopBar(
+            username: username,
+            syncStatus: syncStatus,
+            pendingCount: pendingCount,
+            c: c,
+          ),
           Expanded(child: child),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => context.push('/add'),
-        backgroundColor: c.ink,
-        foregroundColor: c.bg,
-        elevation: 8,
-        child: const Icon(Icons.add, size: 26),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      bottomNavigationBar: _BottomBar(currentIndex: currentIndex, c: c),
+      floatingActionButton: currentIndex >= 0
+          ? FloatingActionButton(
+              onPressed: () => context.push('/add'),
+              backgroundColor: c.ink,
+              foregroundColor: c.bg,
+              elevation: 8,
+              child: const Icon(Icons.add, size: 26),
+            )
+          : null,
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      bottomNavigationBar: currentIndex >= 0
+          ? _BottomBar(currentIndex: currentIndex, c: c)
+          : null,
     );
   }
 }
 
 class _TopBar extends StatelessWidget {
+  final String username;
   final SyncStatus syncStatus;
   final int pendingCount;
   final AppColors c;
-  const _TopBar({required this.syncStatus, required this.pendingCount, required this.c});
+  const _TopBar({
+    required this.username,
+    required this.syncStatus,
+    required this.pendingCount,
+    required this.c,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -55,14 +76,17 @@ class _TopBar extends StatelessWidget {
         ? (c.neg, '$pendingCount pending sync')
         : switch (syncStatus) {
             SyncStatus.syncing => (c.pos.withOpacity(0.6), 'Syncing…'),
-            SyncStatus.done    => (c.pos, 'Synced'),
-            SyncStatus.error   => (c.neg, 'Sync error'),
-            _                  => (c.muted, 'Local only'),
+            SyncStatus.done => (c.pos, 'Synced'),
+            SyncStatus.error => (c.neg, 'Sync error'),
+            _ => (c.muted, 'Local only'),
           };
 
     return Container(
       padding: EdgeInsets.only(
-        left: 16, right: 16, top: MediaQuery.of(context).padding.top + 8, bottom: 10,
+        left: 16,
+        right: 16,
+        top: MediaQuery.of(context).padding.top + 8,
+        bottom: 10,
       ),
       decoration: BoxDecoration(
         color: c.bg,
@@ -71,20 +95,40 @@ class _TopBar extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 32, height: 32,
-            decoration: BoxDecoration(color: c.ink, borderRadius: BorderRadius.circular(9)),
+            margin: const EdgeInsets.only(right: 4),
+            child: Builder(
+              builder: (context) => IconButton(
+                tooltip: 'Menu',
+                onPressed: () => Scaffold.of(context).openDrawer(),
+                icon: Icon(Icons.menu_rounded, color: c.ink),
+              ),
+            ),
+          ),
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+                color: c.ink, borderRadius: BorderRadius.circular(9)),
             child: Center(
               child: Text('PD',
                   style: TextStyle(
-                    color: c.bg, fontWeight: FontWeight.w700, fontSize: 13,
+                    color: c.bg,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
                     letterSpacing: 0.04,
                   )),
             ),
           ),
           const SizedBox(width: 10),
-          Text('Personal Dashboard',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: c.ink)),
-          const Spacer(),
+          Expanded(
+            child: Text(
+              username.trim().isEmpty ? 'Personal Dashboard' : username.trim(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontWeight: FontWeight.w600, fontSize: 15, color: c.ink),
+            ),
+          ),
           GestureDetector(
             onTap: () => context.go('/settings'),
             child: Container(
@@ -98,8 +142,10 @@ class _TopBar extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
-                    width: 7, height: 7,
-                    decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+                    width: 7,
+                    height: 7,
+                    decoration:
+                        BoxDecoration(color: dot, shape: BoxShape.circle),
                   ),
                   const SizedBox(width: 6),
                   Text(label, style: TextStyle(color: c.muted, fontSize: 12)),
@@ -123,22 +169,22 @@ class _BottomBar extends StatelessWidget {
     final tabs = [
       (Icons.home_outlined, Icons.home_rounded, 'Home', '/'),
       (Icons.list_outlined, Icons.list_rounded, 'Activity', '/transactions'),
-      (Icons.vaccines_outlined, Icons.vaccines_rounded, 'Insulin', '/insulin'),
-      (Icons.bar_chart_outlined, Icons.bar_chart_rounded, 'Reports', '/reports'),
-      (Icons.settings_outlined, Icons.settings_rounded, 'Settings', '/settings'),
+      (
+        Icons.bar_chart_outlined,
+        Icons.bar_chart_rounded,
+        'Reports',
+        '/reports'
+      ),
     ];
 
     return BottomAppBar(
       color: c.surface.withOpacity(0.95),
       elevation: 0,
-      shape: const CircularNotchedRectangle(),
-      notchMargin: 8,
       child: SizedBox(
         height: 56,
         child: Row(
           children: [
-            for (int i = 0; i < tabs.length; i++) ...[
-              if (i == 3) const SizedBox(width: 60),
+            for (int i = 0; i < tabs.length; i++)
               Expanded(
                 child: _TabItem(
                   icon: currentIndex == i ? tabs[i].$2 : tabs[i].$1,
@@ -148,7 +194,6 @@ class _BottomBar extends StatelessWidget {
                   onTap: () => context.go(tabs[i].$4),
                 ),
               ),
-            ],
           ],
         ),
       ),
@@ -162,7 +207,12 @@ class _TabItem extends StatelessWidget {
   final bool active;
   final AppColors c;
   final VoidCallback onTap;
-  const _TabItem({required this.icon, required this.label, required this.active, required this.c, required this.onTap});
+  const _TabItem(
+      {required this.icon,
+      required this.label,
+      required this.active,
+      required this.c,
+      required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -175,7 +225,9 @@ class _TabItem extends StatelessWidget {
         children: [
           Icon(icon, size: 22, color: color),
           const SizedBox(height: 2),
-          Text(label, style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w500)),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 10, color: color, fontWeight: FontWeight.w500)),
         ],
       ),
     );

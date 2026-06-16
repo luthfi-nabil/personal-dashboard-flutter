@@ -319,6 +319,18 @@ class AppDb {
   }
 
   // ── Bulk ───────────────────────────────────────────────────────────
+  Future<void> replaceInsulinUsages(
+      List<InsulinUsage> items, String userId) async {
+    await _db.transaction((txn) async {
+      await txn
+          .delete('insulin_usages', where: 'userId = ?', whereArgs: [userId]);
+      for (final u in items) {
+        await txn.insert('insulin_usages', {...u.toMap(), 'userId': userId},
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
   Future<void> clearAll() async {
     for (final table in [
       'sources',

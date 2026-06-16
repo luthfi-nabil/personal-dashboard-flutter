@@ -1,0 +1,1209 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../core/models.dart';
+import '../core/repo.dart';
+import '../core/utils.dart';
+import '../providers/providers.dart';
+import '../theme/app_theme.dart';
+import '../widgets/app_menu_drawer.dart';
+
+enum InsulinPageView { home, activity, reports }
+
+enum InsulinAddKind { type, assign, usage }
+
+class InsulinPage extends ConsumerWidget {
+  final InsulinPageView view;
+
+  const InsulinPage({super.key, required this.view});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = AppTheme.colorsOf(context);
+    final location = GoRouterState.of(context).uri.path;
+    final dataAsync = ref.watch(appDataProvider);
+
+    return Scaffold(
+      backgroundColor: c.bg,
+      drawer: AppMenuDrawer(currentPath: location),
+      body: Column(
+        children: [
+          _InsulinTopBar(c: c),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: () => ref.read(appDataProvider.notifier).refresh(),
+              child: dataAsync.when(
+                loading: () => _StatusList(
+                  c: c,
+                  title: _title(view),
+                  message: 'Loading insulin data...',
+                  loading: true,
+                ),
+                error: (error, _) => _StatusList(
+                  c: c,
+                  title: _title(view),
+                  message:
+                      'Insulin data could not be loaded. Check health-api or pull to refresh.',
+                ),
+                data: (data) => _InsulinBody(view: view, data: data, c: c),
+              ),
+            ),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _openAddMenu(context, c),
+        backgroundColor: c.ink,
+        foregroundColor: c.bg,
+        elevation: 8,
+        child: const Icon(Icons.add_rounded, size: 26),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      bottomNavigationBar: _InsulinBottomBar(currentPath: location, c: c),
+    );
+  }
+
+  void _openAddMenu(BuildContext context, AppColors c) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: c.bg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _AddMenuTile(
+                c: c,
+                icon: Icons.water_drop_outlined,
+                title: 'Add insulin usage',
+                route: '/insulin/add-usage',
+              ),
+              _AddMenuTile(
+                c: c,
+                icon: Icons.vaccines_outlined,
+                title: 'Add insulin type',
+                route: '/insulin/add-type',
+              ),
+              _AddMenuTile(
+                c: c,
+                icon: Icons.inventory_2_outlined,
+                title: 'Add insulin batch',
+                route: '/insulin/add-batch',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AddMenuTile extends StatelessWidget {
+  final AppColors c;
+  final IconData icon;
+  final String title;
+  final String route;
+
+  const _AddMenuTile({
+    required this.c,
+    required this.icon,
+    required this.title,
+    required this.route,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(icon, color: c.ink),
+      title: Text(
+        title,
+        style: TextStyle(color: c.ink, fontWeight: FontWeight.w700),
+      ),
+      onTap: () {
+        Navigator.pop(context);
+        context.go(route);
+      },
+    );
+  }
+}
+
+class _InsulinTopBar extends StatelessWidget {
+  final AppColors c;
+
+  const _InsulinTopBar({required this.c});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.only(
+        left: 8,
+        right: 16,
+        top: MediaQuery.of(context).padding.top + 8,
+        bottom: 10,
+      ),
+      decoration: BoxDecoration(
+        color: c.bg,
+        border: Border(bottom: BorderSide(color: c.line2, width: 0.5)),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Menu',
+            onPressed: () => Scaffold.of(context).openDrawer(),
+            icon: Icon(Icons.menu_rounded, color: c.ink),
+          ),
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: c.ink,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(Icons.vaccines_rounded, color: c.bg, size: 18),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Insulin Dashboard',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 15,
+                color: c.ink,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class InsulinAddPage extends ConsumerStatefulWidget {
+  final InsulinAddKind kind;
+
+  const InsulinAddPage({super.key, required this.kind});
+
+  @override
+  ConsumerState<InsulinAddPage> createState() => _InsulinAddPageState();
+}
+
+class _InsulinAddPageState extends ConsumerState<InsulinAddPage> {
+  final _nameCtl = TextEditingController();
+  final _unitsCtl = TextEditingController();
+  final _uomCtl = TextEditingController(text: 'unit');
+  final _batchCtl = TextEditingController();
+  final _notesCtl = TextEditingController();
+  String? _itemId;
+  String? _assignId;
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _nameCtl.dispose();
+    _unitsCtl.dispose();
+    _uomCtl.dispose();
+    _batchCtl.dispose();
+    _notesCtl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppTheme.colorsOf(context);
+    final location = GoRouterState.of(context).uri.path;
+    final dataAsync = ref.watch(appDataProvider);
+
+    return Scaffold(
+      backgroundColor: c.bg,
+      drawer: AppMenuDrawer(currentPath: location),
+      body: Column(
+        children: [
+          _InsulinTopBar(c: c),
+          Expanded(
+            child: dataAsync.when(
+              loading: () => _StatusList(
+                c: c,
+                title: _addTitle(widget.kind),
+                message: 'Loading insulin data...',
+                loading: true,
+              ),
+              error: (error, _) => _StatusList(
+                c: c,
+                title: _addTitle(widget.kind),
+                message: 'Could not load insulin data.',
+              ),
+              data: (data) => _form(c, data),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _form(AppColors c, AppData data) {
+    _ensureSelection(data);
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
+      children: [
+        Row(
+          children: [
+            IconButton(
+              tooltip: 'Back',
+              onPressed: () => context.go('/insulin'),
+              icon: Icon(Icons.arrow_back_rounded, color: c.ink),
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                _addTitle(widget.kind),
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  color: c.ink,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        if (widget.kind == InsulinAddKind.type) ..._typeFields(c),
+        if (widget.kind == InsulinAddKind.assign) ..._assignFields(c, data),
+        if (widget.kind == InsulinAddKind.usage) ..._usageFields(c, data),
+        const SizedBox(height: 20),
+        FilledButton(
+          onPressed: _saving ? null : () => _save(data),
+          style: FilledButton.styleFrom(
+            backgroundColor: c.ink,
+            foregroundColor: c.bg,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          child: _saving
+              ? SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: c.bg,
+                  ),
+                )
+              : Text(_saveLabel(widget.kind)),
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _typeFields(AppColors c) => [
+        TextField(
+          controller: _nameCtl,
+          style: TextStyle(color: c.ink),
+          decoration: const InputDecoration(
+            labelText: 'Insulin name',
+            hintText: 'e.g. Lantus',
+          ),
+        ),
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            Expanded(
+              child: _numberField(
+                c,
+                controller: _unitsCtl,
+                label: 'Units',
+                hint: 'e.g. 100',
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _uomCtl,
+                style: TextStyle(color: c.ink),
+                decoration: const InputDecoration(
+                  labelText: 'Unit',
+                  hintText: 'unit, ml, IU',
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        _notesField(c),
+      ];
+
+  List<Widget> _assignFields(AppColors c, AppData data) => [
+        if (data.insulinItems.isEmpty)
+          _EmptyPanel(c: c, text: 'Add an insulin type before adding a batch.')
+        else ...[
+          DropdownButtonFormField<String>(
+            initialValue: _itemId,
+            decoration: const InputDecoration(labelText: 'Insulin type'),
+            items: data.insulinItems
+                .map((item) => DropdownMenuItem(
+                      value: item.id,
+                      child: Text(item.name),
+                    ))
+                .toList(),
+            onChanged: (value) => setState(() => _itemId = value),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _batchCtl,
+            style: TextStyle(color: c.ink),
+            decoration: const InputDecoration(
+              labelText: 'Batch number',
+              hintText: 'e.g. B-2026-001',
+            ),
+          ),
+          const SizedBox(height: 14),
+          _notesField(c),
+        ],
+      ];
+
+  List<Widget> _usageFields(AppColors c, AppData data) {
+    final assigns = _itemId == null
+        ? data.insulinAssigns
+        : data.insulinAssigns
+            .where((assign) => assign.itemId == _itemId)
+            .toList();
+
+    return [
+      if (data.insulinItems.isEmpty || data.insulinAssigns.isEmpty)
+        _EmptyPanel(
+          c: c,
+          text: 'Add an insulin type and batch before logging usage.',
+        )
+      else ...[
+        DropdownButtonFormField<String>(
+          initialValue: _itemId,
+          decoration: const InputDecoration(labelText: 'Insulin type'),
+          items: data.insulinItems
+              .map((item) => DropdownMenuItem(
+                    value: item.id,
+                    child: Text(item.name),
+                  ))
+              .toList(),
+          onChanged: (value) {
+            setState(() {
+              _itemId = value;
+              final nextAssigns = data.insulinAssigns
+                  .where((assign) => assign.itemId == value)
+                  .toList();
+              _assignId = nextAssigns.isEmpty ? null : nextAssigns.first.id;
+            });
+          },
+        ),
+        const SizedBox(height: 14),
+        DropdownButtonFormField<String>(
+          initialValue: assigns.any((assign) => assign.id == _assignId)
+              ? _assignId
+              : null,
+          decoration: const InputDecoration(labelText: 'Batch'),
+          items: assigns
+              .map((assign) => DropdownMenuItem(
+                    value: assign.id,
+                    child: Text(
+                        '${assign.batchNo} - ${_fmtNum(assign.totalUnits)} left'),
+                  ))
+              .toList(),
+          onChanged: assigns.isEmpty
+              ? null
+              : (value) => setState(() => _assignId = value),
+        ),
+        const SizedBox(height: 14),
+        _numberField(
+          c,
+          controller: _unitsCtl,
+          label: 'Dose used',
+          hint: 'e.g. 10',
+        ),
+        const SizedBox(height: 14),
+        _notesField(c),
+      ],
+    ];
+  }
+
+  Widget _numberField(
+    AppColors c, {
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+  }) {
+    return TextField(
+      controller: controller,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+      style: TextStyle(color: c.ink),
+      decoration: InputDecoration(labelText: label, hintText: hint),
+    );
+  }
+
+  Widget _notesField(AppColors c) {
+    return TextField(
+      controller: _notesCtl,
+      style: TextStyle(color: c.ink),
+      decoration: const InputDecoration(labelText: 'Notes (optional)'),
+    );
+  }
+
+  void _ensureSelection(AppData data) {
+    if (_itemId == null && data.insulinItems.isNotEmpty) {
+      _itemId = data.insulinItems.first.id;
+    }
+    if (_assignId == null && data.insulinAssigns.isNotEmpty) {
+      final assigns = _itemId == null
+          ? data.insulinAssigns
+          : data.insulinAssigns.where((assign) => assign.itemId == _itemId);
+      if (assigns.isNotEmpty) _assignId = assigns.first.id;
+    }
+  }
+
+  Future<void> _save(AppData data) async {
+    final notes = _notesCtl.text.trim().isEmpty ? null : _notesCtl.text.trim();
+    setState(() => _saving = true);
+    try {
+      if (widget.kind == InsulinAddKind.type) {
+        final units = double.tryParse(_unitsCtl.text.replaceAll(',', '.'));
+        if (_nameCtl.text.trim().isEmpty || units == null || units <= 0) return;
+        await Repo.instance.createInsulinItem(
+          name: _nameCtl.text.trim(),
+          units: units,
+          uom: _uomCtl.text.trim().isEmpty ? 'unit' : _uomCtl.text.trim(),
+          notes: notes,
+        );
+      } else if (widget.kind == InsulinAddKind.assign) {
+        if (_itemId == null || _batchCtl.text.trim().isEmpty) return;
+        await Repo.instance.createInsulinAssign(
+          itemId: _itemId!,
+          batchNo: _batchCtl.text.trim(),
+          notes: notes,
+        );
+      } else {
+        final units = double.tryParse(_unitsCtl.text.replaceAll(',', '.'));
+        if (_assignId == null || units == null || units <= 0) return;
+        await Repo.instance.logInsulinUsage(
+          assignId: _assignId!,
+          units: units,
+          notes: notes,
+        );
+      }
+      await ref.read(appDataProvider.notifier).refresh();
+      if (mounted) context.go('/insulin');
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.toString())),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+}
+
+class _InsulinBody extends StatelessWidget {
+  final InsulinPageView view;
+  final AppData data;
+  final AppColors c;
+
+  const _InsulinBody({
+    required this.view,
+    required this.data,
+    required this.c,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = _usageRows(data);
+    final monthKey = DateTime.now().toIso8601String().substring(0, 7);
+    final monthRows =
+        rows.where((row) => row.usage.date.startsWith(monthKey)).toList();
+    final monthTotal =
+        monthRows.fold<double>(0, (sum, row) => sum + row.usage.units);
+    final usageTotals = _usageByItem(monthRows);
+    final maxUsage = usageTotals.values
+        .fold<double>(0, (max, value) => value > max ? value : max);
+    final remaining =
+        data.insulinAssigns.fold<double>(0, (sum, a) => sum + a.totalUnits);
+
+    return ListView(
+      key: ValueKey('insulin-${view.name}'),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
+      children: [
+        _SummaryGrid(
+          monthTotal: monthTotal,
+          remaining: remaining,
+          activeBatches: data.insulinAssigns.length,
+          usageCount: rows.length,
+          c: c,
+        ),
+        const SizedBox(height: 18),
+        if (view == InsulinPageView.home) ...[
+          _SectionTitle('Insulin types', c),
+          const SizedBox(height: 10),
+          if (data.insulinItems.isEmpty)
+            _EmptyPanel(c: c, text: 'No insulin types from health-api yet.')
+          else
+            ...data.insulinItems
+                .map((item) => _InsulinItemTile(item: item, c: c)),
+          const SizedBox(height: 18),
+          _SectionTitle('Active batches', c),
+          const SizedBox(height: 10),
+          if (data.insulinAssigns.isEmpty)
+            _EmptyPanel(c: c, text: 'No insulin batches from health-api yet.')
+          else
+            ...data.insulinAssigns
+                .map((assign) => _BatchTile(assign: assign, c: c)),
+        ] else if (view == InsulinPageView.activity) ...[
+          _SectionTitle('Usage history', c),
+          const SizedBox(height: 10),
+          if (rows.isEmpty)
+            _EmptyPanel(c: c, text: 'No insulin usage has been logged yet.')
+          else
+            ...rows.map((row) => _UsageTile(row: row, c: c)),
+        ] else ...[
+          _SectionTitle('This month', c),
+          const SizedBox(height: 10),
+          _ReportPanel(rows: monthRows, monthKey: monthKey, c: c),
+          const SizedBox(height: 18),
+          _SectionTitle('Usage by insulin', c),
+          const SizedBox(height: 10),
+          if (monthRows.isEmpty)
+            _EmptyPanel(c: c, text: 'No usage for ${monthLabel(monthKey)} yet.')
+          else
+            ...usageTotals.entries.map(
+              (entry) => _UsageByItemTile(
+                name: entry.key,
+                units: entry.value,
+                maxUnits: maxUsage,
+                c: c,
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+class _SummaryGrid extends StatelessWidget {
+  final double monthTotal;
+  final double remaining;
+  final int activeBatches;
+  final int usageCount;
+  final AppColors c;
+
+  const _SummaryGrid({
+    required this.monthTotal,
+    required this.remaining,
+    required this.activeBatches,
+    required this.usageCount,
+    required this.c,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.count(
+      crossAxisCount: 2,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      childAspectRatio: 2.05,
+      mainAxisSpacing: 10,
+      crossAxisSpacing: 10,
+      children: [
+        _Metric(
+            label: 'This month', value: '${_fmtNum(monthTotal)} doses', c: c),
+        _Metric(label: 'Remaining', value: '${_fmtNum(remaining)} units', c: c),
+        _Metric(label: 'Batches', value: activeBatches.toString(), c: c),
+        _Metric(label: 'Usage logs', value: usageCount.toString(), c: c),
+      ],
+    );
+  }
+}
+
+class _Metric extends StatelessWidget {
+  final String label;
+  final String value;
+  final AppColors c;
+
+  const _Metric({required this.label, required this.value, required this.c});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.line2, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(label, style: TextStyle(fontSize: 11, color: c.muted)),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: c.ink,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InsulinItemTile extends StatelessWidget {
+  final InsulinItem item;
+  final AppColors c;
+
+  const _InsulinItemTile({required this.item, required this.c});
+
+  @override
+  Widget build(BuildContext context) {
+    return _ListPanel(
+      c: c,
+      icon: Icons.vaccines_outlined,
+      title: item.name,
+      subtitle:
+          '${_fmtNum(item.units)} ${item.uom}${(item.notes?.isNotEmpty ?? false) ? ' - ${item.notes}' : ''}',
+      trailing: fmtDate(item.date, 'short'),
+    );
+  }
+}
+
+class _BatchTile extends StatelessWidget {
+  final InsulinAssign assign;
+  final AppColors c;
+
+  const _BatchTile({required this.assign, required this.c});
+
+  @override
+  Widget build(BuildContext context) {
+    return _ListPanel(
+      c: c,
+      icon: Icons.inventory_2_outlined,
+      title: assign.itemName.isEmpty ? 'Unknown insulin' : assign.itemName,
+      subtitle:
+          'Batch ${assign.batchNo}${assign.lastUsedAt == null ? '' : ' - last ${fmtDate(assign.lastUsedAt!, 'short')}'}',
+      trailing: '${_fmtNum(assign.totalUnits)} left',
+    );
+  }
+}
+
+class _UsageTile extends StatelessWidget {
+  final _UsageRow row;
+  final AppColors c;
+
+  const _UsageTile({required this.row, required this.c});
+
+  @override
+  Widget build(BuildContext context) {
+    return _ListPanel(
+      c: c,
+      icon: Icons.water_drop_outlined,
+      title: row.itemName,
+      subtitle:
+          'Batch ${row.batchNo} - ${fmtDate(row.usage.date, 'short')}${(row.usage.notes?.isNotEmpty ?? false) ? ' - ${row.usage.notes}' : ''}',
+      trailing: '${_fmtNum(row.usage.units)} doses',
+    );
+  }
+}
+
+class _ListPanel extends StatelessWidget {
+  final AppColors c;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String trailing;
+
+  const _ListPanel({
+    required this.c,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.line2, width: 0.5),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: c.surface2,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, size: 19, color: c.ink),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: c.ink,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: c.muted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            trailing,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: c.ink,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReportPanel extends StatelessWidget {
+  final List<_UsageRow> rows;
+  final String monthKey;
+  final AppColors c;
+
+  const _ReportPanel({
+    required this.rows,
+    required this.monthKey,
+    required this.c,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final total = rows.fold<double>(0, (sum, row) => sum + row.usage.units);
+    final days = rows
+        .map((row) => row.usage.date.length >= 10
+            ? row.usage.date.substring(0, 10)
+            : row.usage.date)
+        .toSet()
+        .length;
+    final average = days == 0 ? 0.0 : total / days;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.line2, width: 0.5),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _ReportMetric(
+              label: monthLabel(monthKey),
+              value: '${_fmtNum(total)} doses',
+              c: c,
+            ),
+          ),
+          Expanded(
+            child: _ReportMetric(
+              label: 'Days used',
+              value: days.toString(),
+              c: c,
+            ),
+          ),
+          Expanded(
+            child: _ReportMetric(
+              label: 'Daily avg',
+              value: _fmtNum(average),
+              c: c,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReportMetric extends StatelessWidget {
+  final String label;
+  final String value;
+  final AppColors c;
+
+  const _ReportMetric({
+    required this.label,
+    required this.value,
+    required this.c,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(fontSize: 11, color: c.muted)),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: c.ink,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _UsageByItemTile extends StatelessWidget {
+  final String name;
+  final double units;
+  final double maxUnits;
+  final AppColors c;
+
+  const _UsageByItemTile({
+    required this.name,
+    required this.units,
+    required this.maxUnits,
+    required this.c,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = maxUnits <= 0 ? 0.0 : units / maxUnits;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.line2, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  name,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: c.ink,
+                  ),
+                ),
+              ),
+              Text(
+                '${_fmtNum(units)} doses',
+                style: TextStyle(fontSize: 12, color: c.muted),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(99),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 7,
+              backgroundColor: c.surface2,
+              valueColor: AlwaysStoppedAnimation<Color>(c.accent),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyPanel extends StatelessWidget {
+  final AppColors c;
+  final String text;
+
+  const _EmptyPanel({required this.c, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.line2, width: 0.5),
+      ),
+      child: Text(text, style: TextStyle(fontSize: 13, color: c.muted)),
+    );
+  }
+}
+
+class _StatusList extends StatelessWidget {
+  final AppColors c;
+  final String title;
+  final String message;
+  final bool loading;
+
+  const _StatusList({
+    required this.c,
+    required this.title,
+    required this.message,
+    this.loading = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.w700,
+            color: c.ink,
+          ),
+        ),
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: c.surface,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: c.line2, width: 0.5),
+          ),
+          child: Row(
+            children: [
+              if (loading)
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: c.accent,
+                  ),
+                )
+              else
+                Icon(Icons.info_outline_rounded, color: c.muted, size: 20),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  message,
+                  style: TextStyle(fontSize: 13, color: c.muted),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  final String text;
+  final AppColors c;
+
+  const _SectionTitle(this.text, this.c);
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w700,
+        color: c.muted,
+      ),
+    );
+  }
+}
+
+class _InsulinBottomBar extends StatelessWidget {
+  final String currentPath;
+  final AppColors c;
+
+  const _InsulinBottomBar({required this.currentPath, required this.c});
+
+  @override
+  Widget build(BuildContext context) {
+    final tabs = [
+      (Icons.home_outlined, Icons.home_rounded, 'Home', '/insulin'),
+      (
+        Icons.list_outlined,
+        Icons.list_rounded,
+        'Activity',
+        '/insulin/activity'
+      ),
+      (
+        Icons.bar_chart_outlined,
+        Icons.bar_chart_rounded,
+        'Reports',
+        '/insulin/reports'
+      ),
+    ];
+
+    return BottomAppBar(
+      color: c.surface.withValues(alpha: 0.95),
+      elevation: 0,
+      child: SizedBox(
+        height: 56,
+        child: Row(
+          children: [
+            for (final tab in tabs)
+              Expanded(
+                child: _InsulinTabItem(
+                  icon: _isActive(tab.$4, currentPath) ? tab.$2 : tab.$1,
+                  label: tab.$3,
+                  active: _isActive(tab.$4, currentPath),
+                  c: c,
+                  onTap: () => context.go(tab.$4),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool _isActive(String route, String currentPath) {
+    if (route == '/insulin') return currentPath == '/insulin';
+    return currentPath == route || currentPath.startsWith('$route/');
+  }
+}
+
+class _InsulinTabItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool active;
+  final AppColors c;
+  final VoidCallback onTap;
+
+  const _InsulinTabItem({
+    required this.icon,
+    required this.label,
+    required this.active,
+    required this.c,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = active ? c.ink : c.muted;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 22, color: color),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: color,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _UsageRow {
+  final InsulinUsage usage;
+  final InsulinAssign? assign;
+  final InsulinItem? item;
+
+  const _UsageRow({
+    required this.usage,
+    required this.assign,
+    required this.item,
+  });
+
+  String get itemName =>
+      item?.name ??
+      assign?.itemName ??
+      (assign == null ? 'Unknown insulin' : 'Unknown type');
+  String get batchNo => assign?.batchNo ?? 'Unknown batch';
+}
+
+List<_UsageRow> _usageRows(AppData data) {
+  final assignById = {
+    for (final assign in data.insulinAssigns) assign.id: assign
+  };
+  final itemById = {for (final item in data.insulinItems) item.id: item};
+  final rows = data.insulinUsages.map((usage) {
+    final assign = assignById[usage.assignId];
+    return _UsageRow(
+      usage: usage,
+      assign: assign,
+      item: assign == null ? null : itemById[assign.itemId],
+    );
+  }).toList();
+  rows.sort((a, b) => b.usage.date.compareTo(a.usage.date));
+  return rows;
+}
+
+Map<String, double> _usageByItem(List<_UsageRow> rows) {
+  final totals = <String, double>{};
+  for (final row in rows) {
+    totals[row.itemName] = (totals[row.itemName] ?? 0) + row.usage.units;
+  }
+  return totals;
+}
+
+String _title(InsulinPageView view) => switch (view) {
+      InsulinPageView.home => 'Insulin',
+      InsulinPageView.activity => 'Insulin Activity',
+      InsulinPageView.reports => 'Insulin Reports',
+    };
+
+String _addTitle(InsulinAddKind kind) => switch (kind) {
+      InsulinAddKind.type => 'Add insulin type',
+      InsulinAddKind.assign => 'Add insulin batch',
+      InsulinAddKind.usage => 'Add insulin usage',
+    };
+
+String _saveLabel(InsulinAddKind kind) => switch (kind) {
+      InsulinAddKind.type => 'Save type',
+      InsulinAddKind.assign => 'Save batch',
+      InsulinAddKind.usage => 'Save usage',
+    };
+
+String _fmtNum(double n) =>
+    n == n.roundToDouble() ? n.round().toString() : n.toStringAsFixed(1);

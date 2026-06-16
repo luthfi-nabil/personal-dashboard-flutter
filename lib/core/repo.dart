@@ -148,18 +148,22 @@ class Repo {
 
     var insulinItems = <InsulinItem>[];
     var insulinAssigns = <InsulinAssign>[];
+    var insulinUsages = <InsulinUsage>[];
     try {
       final healthResults = await Future.wait([
         api.getInsulinItems(),
         api.getInsulinAssignUsage(),
+        api.getInsulinUsages(),
       ]);
       insulinItems = healthResults[0].map(InsulinItem.fromMap).toList();
       insulinAssigns = healthResults[1].map(InsulinAssign.fromMap).toList();
+      insulinUsages = healthResults[2].map(InsulinUsage.fromMap).toList();
     } catch (_) {
       // health-api may be unreachable independently of transaction-api
     }
-
-    final insulinUsages = await AppDb.instance.getInsulinUsages(cfg.userId);
+    if (insulinUsages.isEmpty) {
+      insulinUsages = await AppDb.instance.getInsulinUsages(cfg.userId);
+    }
 
     return AppData(
       sources: sources,
@@ -269,6 +273,7 @@ class Repo {
     await AppDb.instance.replaceTransactions(data.transactions, userId);
     await AppDb.instance.replaceInsulinItems(data.insulinItems, userId);
     await AppDb.instance.replaceInsulinAssigns(data.insulinAssigns, userId);
+    await AppDb.instance.replaceInsulinUsages(data.insulinUsages, userId);
     await AppDb.instance.setMeta('lastSync', _nowIso());
   }
 
