@@ -62,6 +62,7 @@ class Repo {
       insulinItems: data.insulinItems,
       insulinAssigns: data.insulinAssigns,
       insulinUsages: data.insulinUsages,
+      bloodSugarLogs: data.bloodSugarLogs,
     );
   }
 
@@ -73,6 +74,7 @@ class Repo {
       AppDb.instance.getInsulinItems(userId),
       AppDb.instance.getInsulinAssigns(userId),
       AppDb.instance.getInsulinUsages(userId),
+      AppDb.instance.getBloodSugarLogs(userId),
     ]);
     return AppData(
       sources: results[0] as List<Source>,
@@ -81,6 +83,7 @@ class Repo {
       insulinItems: results[3] as List<InsulinItem>,
       insulinAssigns: results[4] as List<InsulinAssign>,
       insulinUsages: results[5] as List<InsulinUsage>,
+      bloodSugarLogs: results[6] as List<BloodSugarLog>,
     );
   }
 
@@ -149,20 +152,26 @@ class Repo {
     var insulinItems = <InsulinItem>[];
     var insulinAssigns = <InsulinAssign>[];
     var insulinUsages = <InsulinUsage>[];
+    var bloodSugarLogs = <BloodSugarLog>[];
     try {
       final healthResults = await Future.wait([
         api.getInsulinItems(),
         api.getInsulinAssignUsage(),
         api.getInsulinUsages(),
+        api.getBloodSugarLogs(),
       ]);
       insulinItems = healthResults[0].map(InsulinItem.fromMap).toList();
       insulinAssigns = healthResults[1].map(InsulinAssign.fromMap).toList();
       insulinUsages = healthResults[2].map(InsulinUsage.fromMap).toList();
+      bloodSugarLogs = healthResults[3].map(BloodSugarLog.fromMap).toList();
     } catch (_) {
       // health-api may be unreachable independently of transaction-api
     }
     if (insulinUsages.isEmpty) {
       insulinUsages = await AppDb.instance.getInsulinUsages(cfg.userId);
+    }
+    if (bloodSugarLogs.isEmpty) {
+      bloodSugarLogs = await AppDb.instance.getBloodSugarLogs(cfg.userId);
     }
 
     return AppData(
@@ -172,6 +181,7 @@ class Repo {
       insulinItems: insulinItems,
       insulinAssigns: insulinAssigns,
       insulinUsages: insulinUsages,
+      bloodSugarLogs: bloodSugarLogs,
     );
   }
 
@@ -274,6 +284,7 @@ class Repo {
     await AppDb.instance.replaceInsulinItems(data.insulinItems, userId);
     await AppDb.instance.replaceInsulinAssigns(data.insulinAssigns, userId);
     await AppDb.instance.replaceInsulinUsages(data.insulinUsages, userId);
+    await AppDb.instance.replaceBloodSugarLogs(data.bloodSugarLogs, userId);
     await AppDb.instance.setMeta('lastSync', _nowIso());
   }
 
@@ -576,5 +587,22 @@ class Repo {
     final usage = InsulinUsage.fromMap(m);
     await AppDb.instance.putInsulinUsage(usage, _userId);
     return usage;
+  }
+
+  Future<BloodSugarLog> logBloodSugar({
+    required double level,
+    String unit = 'mg/dL',
+    String? mealContext,
+    String? notes,
+  }) async {
+    final m = await RemoteApi(_cfg).createBloodSugarLog(
+      level: level,
+      unit: unit,
+      mealContext: mealContext,
+      notes: notes,
+    );
+    final log = BloodSugarLog.fromMap(m);
+    await AppDb.instance.putBloodSugarLog(log, _userId);
+    return log;
   }
 }

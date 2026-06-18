@@ -31,7 +31,12 @@ class Source {
         'updatedAt': updatedAt,
       };
 
-  Source copyWith({String? id, String? name, String? kind, String? syncState, String? updatedAt}) =>
+  Source copyWith(
+          {String? id,
+          String? name,
+          String? kind,
+          String? syncState,
+          String? updatedAt}) =>
       Source(
         id: id ?? this.id,
         name: name ?? this.name,
@@ -72,7 +77,12 @@ class Category {
         'updatedAt': updatedAt,
       };
 
-  Category copyWith({String? id, String? name, String? kind, String? syncState, String? updatedAt}) =>
+  Category copyWith(
+          {String? id,
+          String? name,
+          String? kind,
+          String? syncState,
+          String? updatedAt}) =>
       Category(
         id: id ?? this.id,
         name: name ?? this.name,
@@ -299,6 +309,7 @@ class AppData {
   final List<InsulinItem> insulinItems;
   final List<InsulinAssign> insulinAssigns;
   final List<InsulinUsage> insulinUsages;
+  final List<BloodSugarLog> bloodSugarLogs;
 
   const AppData({
     required this.sources,
@@ -307,6 +318,7 @@ class AppData {
     this.insulinItems = const [],
     this.insulinAssigns = const [],
     this.insulinUsages = const [],
+    this.bloodSugarLogs = const [],
   });
 }
 
@@ -328,22 +340,22 @@ class InsulinItem {
   });
 
   factory InsulinItem.fromMap(Map<String, dynamic> m) => InsulinItem(
-    id: m['insulin_item_id'] ?? m['id'],
-    name: m['insulin_item_name'] ?? m['name'],
-    units: (m['units'] as num).toDouble(),
-    uom: m['uom'],
-    date: m['created_at'] ?? m['date'],
-    notes: m['notes'] as String?,
-  );
+        id: m['insulin_item_id'] ?? m['id'],
+        name: m['insulin_item_name'] ?? m['name'],
+        units: (m['units'] as num).toDouble(),
+        uom: m['uom'],
+        date: m['created_at'] ?? m['date'],
+        notes: m['notes'] as String?,
+      );
 
   Map<String, dynamic> toMap() => {
-    'id': id,
-    'name': name,
-    'units': units,
-    'uom': uom,
-    'date': date,
-    'notes': notes,
-  };
+        'id': id,
+        'name': name,
+        'units': units,
+        'uom': uom,
+        'date': date,
+        'notes': notes,
+      };
 }
 
 class InsulinAssign {
@@ -368,26 +380,28 @@ class InsulinAssign {
   });
 
   factory InsulinAssign.fromMap(Map<String, dynamic> m) => InsulinAssign(
-    id: m['insulin_assign_id'] ?? m['id'],
-    itemId: m['insulin_item_id'] ?? m['itemId'],
-    batchNo: m['batch_no'] ?? m['batchNo'],
-    date: m['added_at'] ?? m['date'],
-    itemName: m['insulin_item_name'] as String? ?? m['itemName'] as String? ?? '',
-    totalUnits: ((m['total_units'] ?? m['totalUnits']) as num?)?.toDouble() ?? 0,
-    lastUsedAt: m['last_used_at'] as String? ?? m['lastUsedAt'] as String?,
-    notes: m['notes'] as String?,
-  );
+        id: m['insulin_assign_id'] ?? m['id'],
+        itemId: m['insulin_item_id'] ?? m['itemId'],
+        batchNo: m['batch_no'] ?? m['batchNo'],
+        date: m['added_at'] ?? m['date'],
+        itemName:
+            m['insulin_item_name'] as String? ?? m['itemName'] as String? ?? '',
+        totalUnits:
+            ((m['total_units'] ?? m['totalUnits']) as num?)?.toDouble() ?? 0,
+        lastUsedAt: m['last_used_at'] as String? ?? m['lastUsedAt'] as String?,
+        notes: m['notes'] as String?,
+      );
 
   Map<String, dynamic> toMap() => {
-    'id': id,
-    'itemId': itemId,
-    'batchNo': batchNo,
-    'date': date,
-    'itemName': itemName,
-    'totalUnits': totalUnits,
-    'lastUsedAt': lastUsedAt,
-    'notes': notes,
-  };
+        'id': id,
+        'itemId': itemId,
+        'batchNo': batchNo,
+        'date': date,
+        'itemName': itemName,
+        'totalUnits': totalUnits,
+        'lastUsedAt': lastUsedAt,
+        'notes': notes,
+      };
 }
 
 class InsulinUsage {
@@ -406,18 +420,55 @@ class InsulinUsage {
   });
 
   factory InsulinUsage.fromMap(Map<String, dynamic> m) => InsulinUsage(
-    id: m['insulin_usage_id'] ?? m['id'],
-    assignId: m['insulin_assign_id'] ?? m['assignId'],
-    units: (m['units'] as num).toDouble(),
-    date: m['administered_at'] ?? m['date'],
-    notes: m['notes'],
-  );
+        id: m['insulin_usage_id'] ?? m['id'],
+        assignId: m['insulin_assign_id'] ?? m['assignId'],
+        units: (m['units'] as num).toDouble(),
+        date: m['administered_at'] ?? m['date'],
+        notes: m['notes'],
+      );
 
   Map<String, dynamic> toMap() => {
-    'id': id,
-    'assignId': assignId,
-    'units': units,
-    'date': date,
-    'notes': notes,
-  };
+        'id': id,
+        'assignId': assignId,
+        'units': units,
+        'date': date,
+        'notes': notes,
+      };
+}
+
+class BloodSugarLog {
+  final String id;
+  final double level;
+  final String unit;
+  final String measuredAt;
+  final String? mealContext;
+  final String? notes;
+
+  const BloodSugarLog({
+    required this.id,
+    required this.level,
+    required this.unit,
+    required this.measuredAt,
+    this.mealContext,
+    this.notes,
+  });
+
+  factory BloodSugarLog.fromMap(Map<String, dynamic> m) => BloodSugarLog(
+        id: m['blood_sugar_id'] ?? m['id'],
+        level: (m['level'] as num).toDouble(),
+        unit: m['unit'] as String? ?? 'mg/dL',
+        measuredAt: m['measured_at'] ?? m['measuredAt'],
+        mealContext:
+            m['meal_context'] as String? ?? m['mealContext'] as String?,
+        notes: m['notes'] as String?,
+      );
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'level': level,
+        'unit': unit,
+        'measuredAt': measuredAt,
+        'mealContext': mealContext,
+        'notes': notes,
+      };
 }

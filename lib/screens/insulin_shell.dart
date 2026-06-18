@@ -12,7 +12,7 @@ import '../widgets/app_menu_drawer.dart';
 
 enum InsulinPageView { home, activity, reports }
 
-enum InsulinAddKind { type, assign, usage }
+enum InsulinAddKind { type, assign, usage, bloodSugar }
 
 class InsulinPage extends ConsumerWidget {
   final InsulinPageView view;
@@ -95,6 +95,12 @@ class InsulinPage extends ConsumerWidget {
                 icon: Icons.inventory_2_outlined,
                 title: 'Add insulin batch',
                 route: '/insulin/add-batch',
+              ),
+              _AddMenuTile(
+                c: c,
+                icon: Icons.monitor_heart_outlined,
+                title: 'Add blood sugar',
+                route: '/insulin/add-blood-sugar',
               ),
             ],
           ),
@@ -203,7 +209,16 @@ class _InsulinAddPageState extends ConsumerState<InsulinAddPage> {
   final _notesCtl = TextEditingController();
   String? _itemId;
   String? _assignId;
+  String _mealContext = 'fasting';
   bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.kind == InsulinAddKind.bloodSugar) {
+      _uomCtl.text = 'mg/dL';
+    }
+  }
 
   @override
   void dispose() {
@@ -278,6 +293,7 @@ class _InsulinAddPageState extends ConsumerState<InsulinAddPage> {
         if (widget.kind == InsulinAddKind.type) ..._typeFields(c),
         if (widget.kind == InsulinAddKind.assign) ..._assignFields(c, data),
         if (widget.kind == InsulinAddKind.usage) ..._usageFields(c, data),
+        if (widget.kind == InsulinAddKind.bloodSugar) ..._bloodSugarFields(c),
         const SizedBox(height: 20),
         FilledButton(
           onPressed: _saving ? null : () => _save(data),
@@ -432,6 +448,50 @@ class _InsulinAddPageState extends ConsumerState<InsulinAddPage> {
     ];
   }
 
+  List<Widget> _bloodSugarFields(AppColors c) => [
+        Row(
+          children: [
+            Expanded(
+              child: _numberField(
+                c,
+                controller: _unitsCtl,
+                label: 'Blood sugar level',
+                hint: 'e.g. 110',
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _uomCtl,
+                style: TextStyle(color: c.ink),
+                decoration: const InputDecoration(
+                  labelText: 'Unit',
+                  hintText: 'mg/dL',
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        DropdownButtonFormField<String>(
+          initialValue: _mealContext,
+          decoration: const InputDecoration(labelText: 'Context'),
+          items: const [
+            DropdownMenuItem(value: 'fasting', child: Text('Fasting')),
+            DropdownMenuItem(value: 'before meal', child: Text('Before meal')),
+            DropdownMenuItem(value: 'after meal', child: Text('After meal')),
+            DropdownMenuItem(value: 'bedtime', child: Text('Bedtime')),
+            DropdownMenuItem(value: 'random', child: Text('Random')),
+          ],
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() => _mealContext = value);
+          },
+        ),
+        const SizedBox(height: 14),
+        _notesField(c),
+      ];
+
   Widget _numberField(
     AppColors c, {
     required TextEditingController controller,
@@ -487,12 +547,21 @@ class _InsulinAddPageState extends ConsumerState<InsulinAddPage> {
           batchNo: _batchCtl.text.trim(),
           notes: notes,
         );
-      } else {
+      } else if (widget.kind == InsulinAddKind.usage) {
         final units = double.tryParse(_unitsCtl.text.replaceAll(',', '.'));
         if (_assignId == null || units == null || units <= 0) return;
         await Repo.instance.logInsulinUsage(
           assignId: _assignId!,
           units: units,
+          notes: notes,
+        );
+      } else {
+        final level = double.tryParse(_unitsCtl.text.replaceAll(',', '.'));
+        if (level == null || level <= 0) return;
+        await Repo.instance.logBloodSugar(
+          level: level,
+          unit: _uomCtl.text.trim().isEmpty ? 'mg/dL' : _uomCtl.text.trim(),
+          mealContext: _mealContext,
           notes: notes,
         );
       }
@@ -529,32 +598,32 @@ class _InsulinBody extends StatelessWidget {
         rows.where((row) => row.usage.date.startsWith(monthKey)).toList();
     final monthTotal =
         monthRows.fold<double>(0, (sum, row) => sum + row.usage.units);
-    final usageTotals = _usageByItem(monthRows);
-    final maxUsage = usageTotals.values
-        .fold<double>(0, (max, value) => value > max ? value : max);
-    final remaining =
-        data.insulinAssigns.fold<double>(0, (sum, a) => sum + a.totalUnits);
+    final latestRow = rows.isEmpty ? null : rows.first;
+    final bloodSugarLogs = [...data.bloodSugarLogs]
+      ..sort((a, b) => b.measuredAt.compareTo(a.measuredAt));
+    final latestBloodSugar =
+        bloodSugarLogs.isEmpty ? null : bloodSugarLogs.first;
 
     return ListView(
       key: ValueKey('insulin-${view.name}'),
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
       children: [
-        _SummaryGrid(
-          monthTotal: monthTotal,
-          remaining: remaining,
-          activeBatches: data.insulinAssigns.length,
-          usageCount: rows.length,
-          c: c,
-        ),
-        const SizedBox(height: 18),
         if (view == InsulinPageView.home) ...[
-          _SectionTitle('Insulin types', c),
+          _SummaryGrid(
+            monthTotal: monthTotal,
+            activeBatches: data.insulinAssigns.length,
+            latestRow: latestRow,
+            usageCount: rows.length,
+            latestBloodSugar: latestBloodSugar,
+            c: c,
+          ),
+          const SizedBox(height: 18),
+          _SectionTitle('Blood sugar', c),
           const SizedBox(height: 10),
-          if (data.insulinItems.isEmpty)
-            _EmptyPanel(c: c, text: 'No insulin types from health-api yet.')
+          if (latestBloodSugar == null)
+            _EmptyPanel(c: c, text: 'No blood sugar logs yet.')
           else
-            ...data.insulinItems
-                .map((item) => _InsulinItemTile(item: item, c: c)),
+            _BloodSugarTile(log: latestBloodSugar, c: c),
           const SizedBox(height: 18),
           _SectionTitle('Active batches', c),
           const SizedBox(height: 10),
@@ -570,24 +639,17 @@ class _InsulinBody extends StatelessWidget {
             _EmptyPanel(c: c, text: 'No insulin usage has been logged yet.')
           else
             ...rows.map((row) => _UsageTile(row: row, c: c)),
-        ] else ...[
-          _SectionTitle('This month', c),
-          const SizedBox(height: 10),
-          _ReportPanel(rows: monthRows, monthKey: monthKey, c: c),
           const SizedBox(height: 18),
-          _SectionTitle('Usage by insulin', c),
+          _SectionTitle('Blood sugar history', c),
           const SizedBox(height: 10),
-          if (monthRows.isEmpty)
-            _EmptyPanel(c: c, text: 'No usage for ${monthLabel(monthKey)} yet.')
+          if (bloodSugarLogs.isEmpty)
+            _EmptyPanel(c: c, text: 'No blood sugar logs yet.')
           else
-            ...usageTotals.entries.map(
-              (entry) => _UsageByItemTile(
-                name: entry.key,
-                units: entry.value,
-                maxUnits: maxUsage,
-                c: c,
-              ),
-            ),
+            ...bloodSugarLogs.map((log) => _BloodSugarTile(log: log, c: c)),
+        ] else ...[
+          _SectionTitle('Average batch dose per month', c),
+          const SizedBox(height: 10),
+          _InsulinReportsSection(rows: rows, c: c),
         ],
       ],
     );
@@ -596,21 +658,25 @@ class _InsulinBody extends StatelessWidget {
 
 class _SummaryGrid extends StatelessWidget {
   final double monthTotal;
-  final double remaining;
   final int activeBatches;
+  final _UsageRow? latestRow;
+  final BloodSugarLog? latestBloodSugar;
   final int usageCount;
   final AppColors c;
 
   const _SummaryGrid({
     required this.monthTotal,
-    required this.remaining,
     required this.activeBatches,
+    required this.latestRow,
+    required this.latestBloodSugar,
     required this.usageCount,
     required this.c,
   });
 
   @override
   Widget build(BuildContext context) {
+    final latest = latestRow;
+    final latestSugar = latestBloodSugar;
     return GridView.count(
       crossAxisCount: 2,
       shrinkWrap: true,
@@ -621,8 +687,25 @@ class _SummaryGrid extends StatelessWidget {
       children: [
         _Metric(
             label: 'This month', value: '${_fmtNum(monthTotal)} doses', c: c),
-        _Metric(label: 'Remaining', value: '${_fmtNum(remaining)} units', c: c),
-        _Metric(label: 'Batches', value: activeBatches.toString(), c: c),
+        _Metric(label: 'Active batches', value: activeBatches.toString(), c: c),
+        _Metric(
+          label: latest == null
+              ? 'Latest administered'
+              : 'Dose - ${fmtDate(latest.usage.date, 'short')}',
+          value: latest == null
+              ? 'No doses'
+              : '${_fmtNum(latest.usage.units)} doses',
+          c: c,
+        ),
+        _Metric(
+          label: latestSugar == null
+              ? 'Latest blood sugar'
+              : 'Sugar - ${fmtDate(latestSugar.measuredAt, 'short')}',
+          value: latestSugar == null
+              ? 'No reading'
+              : '${_fmtNum(latestSugar.level)} ${latestSugar.unit}',
+          c: c,
+        ),
         _Metric(label: 'Usage logs', value: usageCount.toString(), c: c),
       ],
     );
@@ -667,25 +750,6 @@ class _Metric extends StatelessWidget {
   }
 }
 
-class _InsulinItemTile extends StatelessWidget {
-  final InsulinItem item;
-  final AppColors c;
-
-  const _InsulinItemTile({required this.item, required this.c});
-
-  @override
-  Widget build(BuildContext context) {
-    return _ListPanel(
-      c: c,
-      icon: Icons.vaccines_outlined,
-      title: item.name,
-      subtitle:
-          '${_fmtNum(item.units)} ${item.uom}${(item.notes?.isNotEmpty ?? false) ? ' - ${item.notes}' : ''}',
-      trailing: fmtDate(item.date, 'short'),
-    );
-  }
-}
-
 class _BatchTile extends StatelessWidget {
   final InsulinAssign assign;
   final AppColors c;
@@ -720,6 +784,27 @@ class _UsageTile extends StatelessWidget {
       subtitle:
           'Batch ${row.batchNo} - ${fmtDate(row.usage.date, 'short')}${(row.usage.notes?.isNotEmpty ?? false) ? ' - ${row.usage.notes}' : ''}',
       trailing: '${_fmtNum(row.usage.units)} doses',
+    );
+  }
+}
+
+class _BloodSugarTile extends StatelessWidget {
+  final BloodSugarLog log;
+  final AppColors c;
+
+  const _BloodSugarTile({required this.log, required this.c});
+
+  @override
+  Widget build(BuildContext context) {
+    final contextText =
+        log.mealContext?.isNotEmpty == true ? ' - ${log.mealContext}' : '';
+    final notesText = log.notes?.isNotEmpty == true ? ' - ${log.notes}' : '';
+    return _ListPanel(
+      c: c,
+      icon: Icons.monitor_heart_outlined,
+      title: '${_fmtNum(log.level)} ${log.unit}',
+      subtitle: '${fmtDate(log.measuredAt, 'short')}$contextText$notesText',
+      trailing: fmtDate(log.measuredAt, 'time'),
     );
   }
 }
@@ -800,111 +885,103 @@ class _ListPanel extends StatelessWidget {
   }
 }
 
-class _ReportPanel extends StatelessWidget {
+const _allInsulinTypesFilter = '__all';
+
+class _InsulinReportsSection extends StatefulWidget {
   final List<_UsageRow> rows;
-  final String monthKey;
   final AppColors c;
 
-  const _ReportPanel({
+  const _InsulinReportsSection({
     required this.rows,
-    required this.monthKey,
     required this.c,
   });
 
   @override
-  Widget build(BuildContext context) {
-    final total = rows.fold<double>(0, (sum, row) => sum + row.usage.units);
-    final days = rows
-        .map((row) => row.usage.date.length >= 10
-            ? row.usage.date.substring(0, 10)
-            : row.usage.date)
-        .toSet()
-        .length;
-    final average = days == 0 ? 0.0 : total / days;
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: c.surface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: c.line2, width: 0.5),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _ReportMetric(
-              label: monthLabel(monthKey),
-              value: '${_fmtNum(total)} doses',
-              c: c,
-            ),
-          ),
-          Expanded(
-            child: _ReportMetric(
-              label: 'Days used',
-              value: days.toString(),
-              c: c,
-            ),
-          ),
-          Expanded(
-            child: _ReportMetric(
-              label: 'Daily avg',
-              value: _fmtNum(average),
-              c: c,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  State<_InsulinReportsSection> createState() => _InsulinReportsSectionState();
 }
 
-class _ReportMetric extends StatelessWidget {
-  final String label;
-  final String value;
-  final AppColors c;
-
-  const _ReportMetric({
-    required this.label,
-    required this.value,
-    required this.c,
-  });
+class _InsulinReportsSectionState extends State<_InsulinReportsSection> {
+  String _selectedType = _allInsulinTypesFilter;
 
   @override
   Widget build(BuildContext context) {
+    final c = widget.c;
+    final types = widget.rows.map((row) => row.itemName).toSet().toList()
+      ..sort();
+    final effectiveType =
+        types.contains(_selectedType) ? _selectedType : _allInsulinTypesFilter;
+    final filteredRows = effectiveType == _allInsulinTypesFilter
+        ? widget.rows
+        : widget.rows.where((row) => row.itemName == effectiveType).toList();
+    final averages = _averageBatchUsageByMonth(filteredRows);
+    final maxAverage = averages.fold<double>(
+      0,
+      (max, entry) => entry.averageUnits > max ? entry.averageUnits : max,
+    );
+
+    if (widget.rows.isEmpty) {
+      return _EmptyPanel(c: c, text: 'No insulin usage has been logged yet.');
+    }
+
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: TextStyle(fontSize: 11, color: c.muted)),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            color: c.ink,
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: c.surface,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: c.line2, width: 0.5),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: effectiveType,
+              isExpanded: true,
+              items: [
+                const DropdownMenuItem(
+                  value: _allInsulinTypesFilter,
+                  child: Text('All insulin types'),
+                ),
+                ...types.map(
+                  (type) => DropdownMenuItem(value: type, child: Text(type)),
+                ),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => _selectedType = value);
+              },
+            ),
           ),
         ),
+        const SizedBox(height: 12),
+        if (averages.isEmpty)
+          _EmptyPanel(c: c, text: 'No usage for this insulin type yet.')
+        else
+          ...averages.map(
+            (entry) => _AverageBatchUsageTile(
+              entry: entry,
+              maxAverage: maxAverage,
+              c: c,
+            ),
+          ),
       ],
     );
   }
 }
 
-class _UsageByItemTile extends StatelessWidget {
-  final String name;
-  final double units;
-  final double maxUnits;
+class _AverageBatchUsageTile extends StatelessWidget {
+  final _BatchUsageAverage entry;
+  final double maxAverage;
   final AppColors c;
 
-  const _UsageByItemTile({
-    required this.name,
-    required this.units,
-    required this.maxUnits,
+  const _AverageBatchUsageTile({
+    required this.entry,
+    required this.maxAverage,
     required this.c,
   });
 
   @override
   Widget build(BuildContext context) {
-    final progress = maxUnits <= 0 ? 0.0 : units / maxUnits;
+    final progress = maxAverage <= 0 ? 0.0 : entry.averageUnits / maxAverage;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(14),
@@ -920,7 +997,7 @@ class _UsageByItemTile extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  name,
+                  entry.itemName,
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
@@ -929,10 +1006,16 @@ class _UsageByItemTile extends StatelessWidget {
                 ),
               ),
               Text(
-                '${_fmtNum(units)} doses',
+                '${_fmtNum(entry.averageUnits)} avg/batch',
                 style: TextStyle(fontSize: 12, color: c.muted),
               ),
             ],
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '${monthLabel(entry.monthKey)} ${entry.monthKey.substring(0, 4)} - '
+            '${entry.batchCount} batches - ${_fmtNum(entry.totalUnits)} doses total',
+            style: TextStyle(fontSize: 12, color: c.muted),
           ),
           const SizedBox(height: 8),
           ClipRRect(
@@ -1160,6 +1243,52 @@ class _UsageRow {
       assign?.itemName ??
       (assign == null ? 'Unknown insulin' : 'Unknown type');
   String get batchNo => assign?.batchNo ?? 'Unknown batch';
+  String get batchKey => assign?.id ?? batchNo;
+}
+
+class _BatchUsageAverage {
+  final String monthKey;
+  final String itemName;
+  final double totalUnits;
+  final double averageUnits;
+  final int batchCount;
+
+  const _BatchUsageAverage({
+    required this.monthKey,
+    required this.itemName,
+    required this.totalUnits,
+    required this.averageUnits,
+    required this.batchCount,
+  });
+}
+
+class _BatchUsageAccumulator {
+  final String monthKey;
+  final String itemName;
+  final Map<String, double> batchTotals = {};
+
+  _BatchUsageAccumulator({
+    required this.monthKey,
+    required this.itemName,
+  });
+
+  void add(_UsageRow row) {
+    batchTotals[row.batchKey] =
+        (batchTotals[row.batchKey] ?? 0) + row.usage.units;
+  }
+
+  _BatchUsageAverage toAverage() {
+    final total =
+        batchTotals.values.fold<double>(0, (sum, units) => sum + units);
+    final batchCount = batchTotals.length;
+    return _BatchUsageAverage(
+      monthKey: monthKey,
+      itemName: itemName,
+      totalUnits: total,
+      averageUnits: batchCount == 0 ? 0 : total / batchCount,
+      batchCount: batchCount,
+    );
+  }
 }
 
 List<_UsageRow> _usageRows(AppData data) {
@@ -1179,12 +1308,28 @@ List<_UsageRow> _usageRows(AppData data) {
   return rows;
 }
 
-Map<String, double> _usageByItem(List<_UsageRow> rows) {
-  final totals = <String, double>{};
+List<_BatchUsageAverage> _averageBatchUsageByMonth(List<_UsageRow> rows) {
+  final grouped = <String, _BatchUsageAccumulator>{};
   for (final row in rows) {
-    totals[row.itemName] = (totals[row.itemName] ?? 0) + row.usage.units;
+    final monthKey = isoMonth(row.usage.date);
+    final key = '$monthKey\t${row.itemName}';
+    final accumulator = grouped.putIfAbsent(
+      key,
+      () => _BatchUsageAccumulator(
+        monthKey: monthKey,
+        itemName: row.itemName,
+      ),
+    );
+    accumulator.add(row);
   }
-  return totals;
+  final averages =
+      grouped.values.map((accumulator) => accumulator.toAverage()).toList();
+  averages.sort((a, b) {
+    final monthCompare = b.monthKey.compareTo(a.monthKey);
+    if (monthCompare != 0) return monthCompare;
+    return a.itemName.compareTo(b.itemName);
+  });
+  return averages;
 }
 
 String _title(InsulinPageView view) => switch (view) {
@@ -1197,12 +1342,14 @@ String _addTitle(InsulinAddKind kind) => switch (kind) {
       InsulinAddKind.type => 'Add insulin type',
       InsulinAddKind.assign => 'Add insulin batch',
       InsulinAddKind.usage => 'Add insulin usage',
+      InsulinAddKind.bloodSugar => 'Add blood sugar',
     };
 
 String _saveLabel(InsulinAddKind kind) => switch (kind) {
       InsulinAddKind.type => 'Save type',
       InsulinAddKind.assign => 'Save batch',
       InsulinAddKind.usage => 'Save usage',
+      InsulinAddKind.bloodSugar => 'Save blood sugar',
     };
 
 String _fmtNum(double n) =>

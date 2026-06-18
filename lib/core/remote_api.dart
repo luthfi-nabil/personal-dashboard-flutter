@@ -329,4 +329,21 @@ class RemoteApi {
         'units': units,
         'notes': notes,
       }) as Map);
+
+  // ── health-api: blood sugar ───────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getBloodSugarLogs() async =>
+      _list(await _get(_healthUri('/blood-sugar')));
+
+  Future<Map<String, dynamic>> createBloodSugarLog({
+    required double level,
+    String unit = 'mg/dL',
+    String? mealContext,
+    String? notes,
+  }) async =>
+      Map<String, dynamic>.from(await _post(_healthUri('/blood-sugar'), {
+        'level': level,
+        'unit': unit,
+        'meal_context': mealContext,
+        'notes': notes,
+      }) as Map);
 }

@@ -85,6 +85,10 @@ final _router = GoRouter(
       builder: (c, s) => const InsulinAddPage(kind: InsulinAddKind.assign),
     ),
     GoRoute(
+      path: '/insulin/add-blood-sugar',
+      builder: (c, s) => const InsulinAddPage(kind: InsulinAddKind.bloodSugar),
+    ),
+    GoRoute(
       parentNavigatorKey: _rootKey,
       path: '/add',
       builder: (c, s) => const AddTransactionScreen(),

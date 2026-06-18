@@ -11,6 +11,16 @@ const _userScopedTables = [
   'insulin_items',
   'insulin_assigns',
   'insulin_usages',
+  'blood_sugar_logs',
+];
+
+const _legacyUserScopedTables = [
+  'sources',
+  'categories',
+  'transactions',
+  'insulin_items',
+  'insulin_assigns',
+  'insulin_usages',
 ];
 
 class AppDb {
@@ -25,7 +35,7 @@ class AppDb {
     _db = await factory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 4,
+        version: 5,
         onCreate: (db, _) async {
           await db.execute('''CREATE TABLE sources (
             id TEXT NOT NULL,
@@ -95,6 +105,16 @@ class AppDb {
             userId TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (id, userId)
           )''');
+          await db.execute('''CREATE TABLE blood_sugar_logs (
+            id TEXT NOT NULL,
+            level REAL NOT NULL,
+            unit TEXT NOT NULL,
+            measuredAt TEXT NOT NULL,
+            mealContext TEXT,
+            notes TEXT,
+            userId TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (id, userId)
+          )''');
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
@@ -123,13 +143,25 @@ class AppDb {
             // Existing cached rows can't be attributed to a user in
             // hindsight, so they become part of the logged-out/demo
             // (userId = '') data set.
-            for (final table in _userScopedTables) {
+            for (final table in _legacyUserScopedTables) {
               await db.execute(
                   "ALTER TABLE $table ADD COLUMN userId TEXT NOT NULL DEFAULT ''");
             }
           }
           if (oldVersion < 4) {
             await _migrateToPerUserPrimaryKeys(db);
+          }
+          if (oldVersion < 5) {
+            await db.execute('''CREATE TABLE IF NOT EXISTS blood_sugar_logs (
+              id TEXT NOT NULL,
+              level REAL NOT NULL,
+              unit TEXT NOT NULL,
+              measuredAt TEXT NOT NULL,
+              mealContext TEXT,
+              notes TEXT,
+              userId TEXT NOT NULL DEFAULT '',
+              PRIMARY KEY (id, userId)
+            )''');
           }
         },
       ),
@@ -258,6 +290,22 @@ class AppDb {
         where: 'id = ? AND userId = ?', whereArgs: [id, userId]);
   }
 
+  Future<List<BloodSugarLog>> getBloodSugarLogs(String userId) async {
+    final rows = await _db.query('blood_sugar_logs',
+        where: 'userId = ?', whereArgs: [userId], orderBy: 'measuredAt DESC');
+    return rows.map(BloodSugarLog.fromMap).toList();
+  }
+
+  Future<void> putBloodSugarLog(BloodSugarLog t, String userId) async {
+    await _db.insert('blood_sugar_logs', {...t.toMap(), 'userId': userId},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteBloodSugarLog(String id, String userId) async {
+    await _db.delete('blood_sugar_logs',
+        where: 'id = ? AND userId = ?', whereArgs: [id, userId]);
+  }
+
   // ── Bulk replace (online-first cache refresh) ───────────────────────
   Future<void> replaceSources(List<Source> items, String userId) async {
     await _db.transaction((txn) async {
@@ -331,16 +379,20 @@ class AppDb {
     });
   }
 
+  Future<void> replaceBloodSugarLogs(
+      List<BloodSugarLog> items, String userId) async {
+    await _db.transaction((txn) async {
+      await txn
+          .delete('blood_sugar_logs', where: 'userId = ?', whereArgs: [userId]);
+      for (final log in items) {
+        await txn.insert('blood_sugar_logs', {...log.toMap(), 'userId': userId},
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
   Future<void> clearAll() async {
-    for (final table in [
-      'sources',
-      'categories',
-      'transactions',
-      'meta',
-      'insulin_items',
-      'insulin_assigns',
-      'insulin_usages'
-    ]) {
+    for (final table in [..._userScopedTables, 'meta']) {
       await _db.delete(table);
     }
   }
@@ -415,6 +467,16 @@ Future<void> _migrateToPerUserPrimaryKeys(Database db) async {
       userId TEXT NOT NULL DEFAULT '',
       PRIMARY KEY (id, userId)
     )''',
+    'blood_sugar_logs': '''CREATE TABLE blood_sugar_logs (
+      id TEXT NOT NULL,
+      level REAL NOT NULL,
+      unit TEXT NOT NULL,
+      measuredAt TEXT NOT NULL,
+      mealContext TEXT,
+      notes TEXT,
+      userId TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (id, userId)
+    )''',
   };
 
   const columns = <String, String>{
@@ -426,9 +488,11 @@ Future<void> _migrateToPerUserPrimaryKeys(Database db) async {
     'insulin_assigns':
         'id, itemId, batchNo, date, itemName, totalUnits, lastUsedAt, notes, userId',
     'insulin_usages': 'id, assignId, units, date, notes, userId',
+    'blood_sugar_logs':
+        'id, level, unit, measuredAt, mealContext, notes, userId',
   };
 
-  for (final table in _userScopedTables) {
+  for (final table in _legacyUserScopedTables) {
     final oldTable = '${table}_v3';
     await db.execute('ALTER TABLE $table RENAME TO $oldTable');
     await db.execute(schemas[table]!);
