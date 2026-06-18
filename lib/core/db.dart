@@ -35,7 +35,7 @@ class AppDb {
     _db = await factory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 5,
+        version: 6,
         onCreate: (db, _) async {
           await db.execute('''CREATE TABLE sources (
             id TEXT NOT NULL,
@@ -81,6 +81,7 @@ class AppDb {
             uom TEXT NOT NULL,
             date TEXT NOT NULL,
             notes TEXT,
+            syncState TEXT DEFAULT 'synced',
             userId TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (id, userId)
           )''');
@@ -93,6 +94,7 @@ class AppDb {
             totalUnits REAL DEFAULT 0,
             lastUsedAt TEXT,
             notes TEXT,
+            syncState TEXT DEFAULT 'synced',
             userId TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (id, userId)
           )''');
@@ -102,6 +104,7 @@ class AppDb {
             units REAL NOT NULL,
             date TEXT NOT NULL,
             notes TEXT,
+            syncState TEXT DEFAULT 'synced',
             userId TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (id, userId)
           )''');
@@ -112,6 +115,7 @@ class AppDb {
             measuredAt TEXT NOT NULL,
             mealContext TEXT,
             notes TEXT,
+            syncState TEXT DEFAULT 'synced',
             userId TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (id, userId)
           )''');
@@ -162,6 +166,16 @@ class AppDb {
               userId TEXT NOT NULL DEFAULT '',
               PRIMARY KEY (id, userId)
             )''');
+          }
+          if (oldVersion < 6) {
+            await _addColumnIfMissing(
+                db, 'insulin_items', "syncState TEXT DEFAULT 'synced'");
+            await _addColumnIfMissing(
+                db, 'insulin_assigns', "syncState TEXT DEFAULT 'synced'");
+            await _addColumnIfMissing(
+                db, 'insulin_usages', "syncState TEXT DEFAULT 'synced'");
+            await _addColumnIfMissing(
+                db, 'blood_sugar_logs', "syncState TEXT DEFAULT 'synced'");
           }
         },
       ),
@@ -248,6 +262,14 @@ class AppDb {
     return rows.map(InsulinItem.fromMap).toList();
   }
 
+  Future<List<InsulinItem>> getPendingInsulinItems(String userId) async {
+    final rows = await _db.query('insulin_items',
+        where: "userId = ? AND syncState = 'pending'",
+        whereArgs: [userId],
+        orderBy: 'date ASC');
+    return rows.map(InsulinItem.fromMap).toList();
+  }
+
   Future<void> putInsulinItem(InsulinItem t, String userId) async {
     await _db.insert('insulin_items', {...t.toMap(), 'userId': userId},
         conflictAlgorithm: ConflictAlgorithm.replace);
@@ -261,6 +283,14 @@ class AppDb {
   Future<List<InsulinAssign>> getInsulinAssigns(String userId) async {
     final rows = await _db
         .query('insulin_assigns', where: 'userId = ?', whereArgs: [userId]);
+    return rows.map(InsulinAssign.fromMap).toList();
+  }
+
+  Future<List<InsulinAssign>> getPendingInsulinAssigns(String userId) async {
+    final rows = await _db.query('insulin_assigns',
+        where: "userId = ? AND syncState = 'pending'",
+        whereArgs: [userId],
+        orderBy: 'date ASC');
     return rows.map(InsulinAssign.fromMap).toList();
   }
 
@@ -280,6 +310,14 @@ class AppDb {
     return rows.map(InsulinUsage.fromMap).toList();
   }
 
+  Future<List<InsulinUsage>> getPendingInsulinUsages(String userId) async {
+    final rows = await _db.query('insulin_usages',
+        where: "userId = ? AND syncState = 'pending'",
+        whereArgs: [userId],
+        orderBy: 'date ASC');
+    return rows.map(InsulinUsage.fromMap).toList();
+  }
+
   Future<void> putInsulinUsage(InsulinUsage t, String userId) async {
     await _db.insert('insulin_usages', {...t.toMap(), 'userId': userId},
         conflictAlgorithm: ConflictAlgorithm.replace);
@@ -293,6 +331,14 @@ class AppDb {
   Future<List<BloodSugarLog>> getBloodSugarLogs(String userId) async {
     final rows = await _db.query('blood_sugar_logs',
         where: 'userId = ?', whereArgs: [userId], orderBy: 'measuredAt DESC');
+    return rows.map(BloodSugarLog.fromMap).toList();
+  }
+
+  Future<List<BloodSugarLog>> getPendingBloodSugarLogs(String userId) async {
+    final rows = await _db.query('blood_sugar_logs',
+        where: "userId = ? AND syncState = 'pending'",
+        whereArgs: [userId],
+        orderBy: 'measuredAt ASC');
     return rows.map(BloodSugarLog.fromMap).toList();
   }
 
@@ -345,8 +391,8 @@ class AppDb {
   Future<void> replaceInsulinItems(
       List<InsulinItem> items, String userId) async {
     await _db.transaction((txn) async {
-      await txn
-          .delete('insulin_items', where: 'userId = ?', whereArgs: [userId]);
+      await txn.delete('insulin_items',
+          where: "userId = ? AND syncState != 'pending'", whereArgs: [userId]);
       for (final i in items) {
         await txn.insert('insulin_items', {...i.toMap(), 'userId': userId},
             conflictAlgorithm: ConflictAlgorithm.replace);
@@ -357,8 +403,8 @@ class AppDb {
   Future<void> replaceInsulinAssigns(
       List<InsulinAssign> items, String userId) async {
     await _db.transaction((txn) async {
-      await txn
-          .delete('insulin_assigns', where: 'userId = ?', whereArgs: [userId]);
+      await txn.delete('insulin_assigns',
+          where: "userId = ? AND syncState != 'pending'", whereArgs: [userId]);
       for (final a in items) {
         await txn.insert('insulin_assigns', {...a.toMap(), 'userId': userId},
             conflictAlgorithm: ConflictAlgorithm.replace);
@@ -370,8 +416,8 @@ class AppDb {
   Future<void> replaceInsulinUsages(
       List<InsulinUsage> items, String userId) async {
     await _db.transaction((txn) async {
-      await txn
-          .delete('insulin_usages', where: 'userId = ?', whereArgs: [userId]);
+      await txn.delete('insulin_usages',
+          where: "userId = ? AND syncState != 'pending'", whereArgs: [userId]);
       for (final u in items) {
         await txn.insert('insulin_usages', {...u.toMap(), 'userId': userId},
             conflictAlgorithm: ConflictAlgorithm.replace);
@@ -382,13 +428,24 @@ class AppDb {
   Future<void> replaceBloodSugarLogs(
       List<BloodSugarLog> items, String userId) async {
     await _db.transaction((txn) async {
-      await txn
-          .delete('blood_sugar_logs', where: 'userId = ?', whereArgs: [userId]);
+      await txn.delete('blood_sugar_logs',
+          where: "userId = ? AND syncState != 'pending'", whereArgs: [userId]);
       for (final log in items) {
         await txn.insert('blood_sugar_logs', {...log.toMap(), 'userId': userId},
             conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
+  }
+
+  Future<int> getPendingWriteCount(String userId) async {
+    final results = await Future.wait([
+      getPendingTransactions(userId),
+      getPendingInsulinItems(userId),
+      getPendingInsulinAssigns(userId),
+      getPendingInsulinUsages(userId),
+      getPendingBloodSugarLogs(userId),
+    ]);
+    return results.fold<int>(0, (sum, rows) => sum + rows.length);
   }
 
   Future<void> clearAll() async {
@@ -501,5 +558,15 @@ Future<void> _migrateToPerUserPrimaryKeys(Database db) async {
       'SELECT ${columns[table]} FROM $oldTable',
     );
     await db.execute('DROP TABLE $oldTable');
+  }
+}
+
+Future<void> _addColumnIfMissing(
+    Database db, String table, String columnSql) async {
+  final column = columnSql.split(RegExp(r'\s+')).first;
+  final columns = await db.rawQuery('PRAGMA table_info($table)');
+  final exists = columns.any((row) => row['name'] == column);
+  if (!exists) {
+    await db.execute('ALTER TABLE $table ADD COLUMN $columnSql');
   }
 }

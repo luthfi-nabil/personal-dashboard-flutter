@@ -25,6 +25,8 @@ class MainShell extends ConsumerWidget {
       currentIndex = 1;
     } else if (location.startsWith('/reports')) {
       currentIndex = 2;
+    } else if (location.startsWith('/options')) {
+      currentIndex = 3;
     }
 
     return Scaffold(
@@ -175,6 +177,7 @@ class _BottomBar extends StatelessWidget {
         'Reports',
         '/reports'
       ),
+      (Icons.tune_outlined, Icons.tune_rounded, 'Options', '/options'),
     ];
 
     return BottomAppBar(

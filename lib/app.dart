@@ -8,6 +8,7 @@ import 'screens/add_transaction_screen.dart';
 import 'screens/source_detail_screen.dart';
 import 'screens/category_detail_screen.dart';
 import 'screens/reports_screen.dart';
+import 'screens/options_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/insulin_shell.dart';
 import 'screens/login_screen.dart';
@@ -56,6 +57,7 @@ final _router = GoRouter(
             path: '/transactions',
             builder: (c, s) => const TransactionsScreen()),
         GoRoute(path: '/reports', builder: (c, s) => const ReportsScreen()),
+        GoRoute(path: '/options', builder: (c, s) => const OptionsScreen()),
         GoRoute(path: '/settings', builder: (c, s) => const SettingsScreen()),
         GoRoute(path: '/api-log', builder: (c, s) => const ApiLogScreen()),
       ],

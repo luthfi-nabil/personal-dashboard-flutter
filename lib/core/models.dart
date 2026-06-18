@@ -329,6 +329,7 @@ class InsulinItem {
   final String uom;
   final String date;
   final String? notes;
+  final String syncState;
 
   const InsulinItem({
     required this.id,
@@ -337,6 +338,7 @@ class InsulinItem {
     required this.uom,
     required this.date,
     this.notes,
+    this.syncState = 'pending',
   });
 
   factory InsulinItem.fromMap(Map<String, dynamic> m) => InsulinItem(
@@ -346,6 +348,7 @@ class InsulinItem {
         uom: m['uom'],
         date: m['created_at'] ?? m['date'],
         notes: m['notes'] as String?,
+        syncState: m['syncState'] as String? ?? 'synced',
       );
 
   Map<String, dynamic> toMap() => {
@@ -355,6 +358,7 @@ class InsulinItem {
         'uom': uom,
         'date': date,
         'notes': notes,
+        'syncState': syncState,
       };
 }
 
@@ -367,6 +371,7 @@ class InsulinAssign {
   final double totalUnits;
   final String? lastUsedAt;
   final String? notes;
+  final String syncState;
 
   const InsulinAssign({
     required this.id,
@@ -377,6 +382,7 @@ class InsulinAssign {
     this.totalUnits = 0,
     this.lastUsedAt,
     this.notes,
+    this.syncState = 'pending',
   });
 
   factory InsulinAssign.fromMap(Map<String, dynamic> m) => InsulinAssign(
@@ -390,6 +396,7 @@ class InsulinAssign {
             ((m['total_units'] ?? m['totalUnits']) as num?)?.toDouble() ?? 0,
         lastUsedAt: m['last_used_at'] as String? ?? m['lastUsedAt'] as String?,
         notes: m['notes'] as String?,
+        syncState: m['syncState'] as String? ?? 'synced',
       );
 
   Map<String, dynamic> toMap() => {
@@ -401,6 +408,7 @@ class InsulinAssign {
         'totalUnits': totalUnits,
         'lastUsedAt': lastUsedAt,
         'notes': notes,
+        'syncState': syncState,
       };
 }
 
@@ -410,6 +418,7 @@ class InsulinUsage {
   final double units;
   final String date;
   final String? notes;
+  final String syncState;
 
   const InsulinUsage({
     required this.id,
@@ -417,6 +426,7 @@ class InsulinUsage {
     required this.units,
     required this.date,
     this.notes,
+    this.syncState = 'pending',
   });
 
   factory InsulinUsage.fromMap(Map<String, dynamic> m) => InsulinUsage(
@@ -425,6 +435,7 @@ class InsulinUsage {
         units: (m['units'] as num).toDouble(),
         date: m['administered_at'] ?? m['date'],
         notes: m['notes'],
+        syncState: m['syncState'] as String? ?? 'synced',
       );
 
   Map<String, dynamic> toMap() => {
@@ -433,6 +444,7 @@ class InsulinUsage {
         'units': units,
         'date': date,
         'notes': notes,
+        'syncState': syncState,
       };
 }
 
@@ -443,6 +455,7 @@ class BloodSugarLog {
   final String measuredAt;
   final String? mealContext;
   final String? notes;
+  final String syncState;
 
   const BloodSugarLog({
     required this.id,
@@ -451,6 +464,7 @@ class BloodSugarLog {
     required this.measuredAt,
     this.mealContext,
     this.notes,
+    this.syncState = 'pending',
   });
 
   factory BloodSugarLog.fromMap(Map<String, dynamic> m) => BloodSugarLog(
@@ -461,6 +475,7 @@ class BloodSugarLog {
         mealContext:
             m['meal_context'] as String? ?? m['mealContext'] as String?,
         notes: m['notes'] as String?,
+        syncState: m['syncState'] as String? ?? 'synced',
       );
 
   Map<String, dynamic> toMap() => {
@@ -470,5 +485,6 @@ class BloodSugarLog {
         'measuredAt': measuredAt,
         'mealContext': mealContext,
         'notes': notes,
+        'syncState': syncState,
       };
 }

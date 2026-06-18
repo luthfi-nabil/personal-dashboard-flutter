@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:fl_chart/fl_chart.dart';
 
 import '../core/models.dart';
 import '../core/repo.dart';
@@ -38,14 +39,14 @@ class InsulinPage extends ConsumerWidget {
                 loading: () => _StatusList(
                   c: c,
                   title: _title(view),
-                  message: 'Loading insulin data...',
+                  message: 'Loading diabetic data...',
                   loading: true,
                 ),
                 error: (error, _) => _StatusList(
                   c: c,
                   title: _title(view),
                   message:
-                      'Insulin data could not be loaded. Check health-api or pull to refresh.',
+                      'Diabetic data could not be loaded. Check health-api or pull to refresh.',
                 ),
                 data: (data) => _InsulinBody(view: view, data: data, c: c),
               ),
@@ -99,7 +100,7 @@ class InsulinPage extends ConsumerWidget {
               _AddMenuTile(
                 c: c,
                 icon: Icons.monitor_heart_outlined,
-                title: 'Add blood sugar',
+                title: 'Add blood sugar level',
                 route: '/insulin/add-blood-sugar',
               ),
             ],
@@ -176,7 +177,7 @@ class _InsulinTopBar extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Insulin Dashboard',
+              'Diabetic Dashboard',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -247,13 +248,13 @@ class _InsulinAddPageState extends ConsumerState<InsulinAddPage> {
               loading: () => _StatusList(
                 c: c,
                 title: _addTitle(widget.kind),
-                message: 'Loading insulin data...',
+                message: 'Loading diabetic data...',
                 loading: true,
               ),
               error: (error, _) => _StatusList(
                 c: c,
                 title: _addTitle(widget.kind),
-                message: 'Could not load insulin data.',
+                message: 'Could not load diabetic data.',
               ),
               data: (data) => _form(c, data),
             ),
@@ -603,6 +604,9 @@ class _InsulinBody extends StatelessWidget {
       ..sort((a, b) => b.measuredAt.compareTo(a.measuredAt));
     final latestBloodSugar =
         bloodSugarLogs.isEmpty ? null : bloodSugarLogs.first;
+    final monthSugarLogs =
+        bloodSugarLogs.where((log) => log.measuredAt.startsWith(monthKey));
+    final monthAverageSugar = _averageSugar(monthSugarLogs);
 
     return ListView(
       key: ValueKey('insulin-${view.name}'),
@@ -615,6 +619,8 @@ class _InsulinBody extends StatelessWidget {
             latestRow: latestRow,
             usageCount: rows.length,
             latestBloodSugar: latestBloodSugar,
+            monthAverageSugar: monthAverageSugar,
+            monthSugarUnit: latestBloodSugar?.unit ?? 'mg/dL',
             c: c,
           ),
           const SizedBox(height: 18),
@@ -647,6 +653,10 @@ class _InsulinBody extends StatelessWidget {
           else
             ...bloodSugarLogs.map((log) => _BloodSugarTile(log: log, c: c)),
         ] else ...[
+          _SectionTitle('Sugar and insulin trend', c),
+          const SizedBox(height: 10),
+          _HealthTrendChart(rows: rows, bloodSugarLogs: bloodSugarLogs, c: c),
+          const SizedBox(height: 18),
           _SectionTitle('Average batch dose per month', c),
           const SizedBox(height: 10),
           _InsulinReportsSection(rows: rows, c: c),
@@ -661,6 +671,8 @@ class _SummaryGrid extends StatelessWidget {
   final int activeBatches;
   final _UsageRow? latestRow;
   final BloodSugarLog? latestBloodSugar;
+  final double? monthAverageSugar;
+  final String monthSugarUnit;
   final int usageCount;
   final AppColors c;
 
@@ -669,6 +681,8 @@ class _SummaryGrid extends StatelessWidget {
     required this.activeBatches,
     required this.latestRow,
     required this.latestBloodSugar,
+    required this.monthAverageSugar,
+    required this.monthSugarUnit,
     required this.usageCount,
     required this.c,
   });
@@ -691,7 +705,7 @@ class _SummaryGrid extends StatelessWidget {
         _Metric(
           label: latest == null
               ? 'Latest administered'
-              : 'Dose - ${fmtDate(latest.usage.date, 'short')}',
+              : 'Dose - ${_fmtDateTime(latest.usage.date)}',
           value: latest == null
               ? 'No doses'
               : '${_fmtNum(latest.usage.units)} doses',
@@ -700,14 +714,383 @@ class _SummaryGrid extends StatelessWidget {
         _Metric(
           label: latestSugar == null
               ? 'Latest blood sugar'
-              : 'Sugar - ${fmtDate(latestSugar.measuredAt, 'short')}',
+              : 'Sugar - ${_fmtDateTime(latestSugar.measuredAt)}',
           value: latestSugar == null
               ? 'No reading'
               : '${_fmtNum(latestSugar.level)} ${latestSugar.unit}',
           c: c,
         ),
-        _Metric(label: 'Usage logs', value: usageCount.toString(), c: c),
+        _Metric(
+            label: 'Insulin usage logs', value: usageCount.toString(), c: c),
+        _Metric(
+          label:
+              'Avg sugar - ${monthLabel(DateTime.now().toIso8601String().substring(0, 7))}',
+          value: monthAverageSugar == null
+              ? 'No readings'
+              : '${_fmtNum(monthAverageSugar!)} $monthSugarUnit',
+          c: c,
+        ),
       ],
+    );
+  }
+}
+
+class _HealthTrendChart extends StatefulWidget {
+  final List<_UsageRow> rows;
+  final List<BloodSugarLog> bloodSugarLogs;
+  final AppColors c;
+
+  const _HealthTrendChart({
+    required this.rows,
+    required this.bloodSugarLogs,
+    required this.c,
+  });
+
+  @override
+  State<_HealthTrendChart> createState() => _HealthTrendChartState();
+}
+
+class _HealthTrendChartState extends State<_HealthTrendChart> {
+  int _days = 30;
+  DateTimeRange? _customRange;
+  String _selectedType = _allInsulinTypesFilter;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.c;
+    final range = _effectiveRange();
+    final types = widget.rows.map((row) => row.itemName).toSet().toList()
+      ..sort();
+    final effectiveType =
+        types.contains(_selectedType) ? _selectedType : _allInsulinTypesFilter;
+    final points = _trendPoints(
+      widget.rows,
+      widget.bloodSugarLogs,
+      range,
+      insulinType:
+          effectiveType == _allInsulinTypesFilter ? null : effectiveType,
+    );
+    final sugarSeries = points
+        .where((point) => point.sugar != null)
+        .map((point) => _ChartPoint(
+              day: point.day,
+              value: point.sugar!,
+              label: '${_fmtNum(point.sugar!)} ${point.sugarUnit}',
+            ))
+        .toList();
+    final insulinSeries = points
+        .where((point) => point.insulin > 0)
+        .map((point) => _ChartPoint(
+              day: point.day,
+              value: point.insulin,
+              label: '${_fmtNum(point.insulin)} doses',
+            ))
+        .toList();
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.line2, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _RangeChip(
+                label: '7D',
+                selected: _customRange == null && _days == 7,
+                onTap: () => setState(() {
+                  _days = 7;
+                  _customRange = null;
+                }),
+                c: c,
+              ),
+              _RangeChip(
+                label: '30D',
+                selected: _customRange == null && _days == 30,
+                onTap: () => setState(() {
+                  _days = 30;
+                  _customRange = null;
+                }),
+                c: c,
+              ),
+              _RangeChip(
+                label: '90D',
+                selected: _customRange == null && _days == 90,
+                onTap: () => setState(() {
+                  _days = 90;
+                  _customRange = null;
+                }),
+                c: c,
+              ),
+              _RangeChip(
+                label: _customRange == null
+                    ? 'Dates'
+                    : '${fmtDate(_customRange!.start.toIso8601String(), 'short')} - ${fmtDate(_customRange!.end.toIso8601String(), 'short')}',
+                selected: _customRange != null,
+                onTap: _pickRange,
+                c: c,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _TrendSeriesPanel(
+            title: 'Sugar trend',
+            subtitle: 'Daily average blood sugar',
+            emptyText: 'No sugar data in this range.',
+            points: sugarSeries,
+            color: c.accent,
+            c: c,
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Insulin usage trend',
+                  style: TextStyle(
+                    color: c.ink,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              if (types.isNotEmpty)
+                DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: effectiveType,
+                    borderRadius: BorderRadius.circular(8),
+                    items: [
+                      const DropdownMenuItem(
+                        value: _allInsulinTypesFilter,
+                        child: Text('All types'),
+                      ),
+                      ...types.map(
+                        (type) =>
+                            DropdownMenuItem(value: type, child: Text(type)),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() => _selectedType = value);
+                    },
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          _TrendSeriesPanel(
+            title: null,
+            subtitle: effectiveType == _allInsulinTypesFilter
+                ? 'Daily total insulin usage'
+                : 'Daily usage for $effectiveType',
+            emptyText: 'No insulin usage in this range.',
+            points: insulinSeries,
+            color: c.neg,
+            c: c,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${fmtDate(points.first.day, 'short')} - ${fmtDate(points.last.day, 'short')}',
+            style: TextStyle(fontSize: 11, color: c.muted),
+          ),
+        ],
+      ),
+    );
+  }
+
+  DateTimeRange _effectiveRange() {
+    if (_customRange != null) return _customRange!;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return DateTimeRange(
+      start: today.subtract(Duration(days: _days - 1)),
+      end: today,
+    );
+  }
+
+  Future<void> _pickRange() async {
+    final now = DateTime.now();
+    final initial = _customRange ??
+        DateTimeRange(
+          start: DateTime(now.year, now.month, now.day)
+              .subtract(Duration(days: _days - 1)),
+          end: DateTime(now.year, now.month, now.day),
+        );
+    final selected = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 1),
+      initialDateRange: initial,
+    );
+    if (selected == null) return;
+    setState(() => _customRange = selected);
+  }
+}
+
+class _TrendSeriesPanel extends StatelessWidget {
+  final String? title;
+  final String subtitle;
+  final String emptyText;
+  final List<_ChartPoint> points;
+  final Color color;
+  final AppColors c;
+
+  const _TrendSeriesPanel({
+    required this.title,
+    required this.subtitle,
+    required this.emptyText,
+    required this.points,
+    required this.color,
+    required this.c,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (title != null) ...[
+          Text(
+            title!,
+            style: TextStyle(
+              color: c.ink,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 2),
+        ],
+        Text(subtitle, style: TextStyle(fontSize: 11, color: c.muted)),
+        const SizedBox(height: 8),
+        if (points.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child:
+                Text(emptyText, style: TextStyle(fontSize: 12, color: c.muted)),
+          )
+        else
+          _TrendLineChart(points: points, color: color, c: c),
+      ],
+    );
+  }
+}
+
+class _TrendLineChart extends StatelessWidget {
+  final List<_ChartPoint> points;
+  final Color color;
+  final AppColors c;
+
+  const _TrendLineChart({
+    required this.points,
+    required this.color,
+    required this.c,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final values = points.map((point) => point.value).toList();
+    final minValue = values.reduce((a, b) => a < b ? a : b);
+    final maxValue = values.reduce((a, b) => a > b ? a : b);
+    final range = maxValue - minValue;
+    final padding = range == 0 ? (maxValue.abs() * 0.1) + 1 : range * 0.18;
+    final minY = (minValue - padding).clamp(0.0, double.infinity);
+    final maxY = maxValue + padding;
+    final spots = [
+      for (var i = 0; i < points.length; i++)
+        FlSpot(i.toDouble(), points[i].value),
+    ];
+
+    return SizedBox(
+      height: 130,
+      child: LineChart(
+        LineChartData(
+          minX: 0,
+          maxX: points.length <= 1 ? 1 : (points.length - 1).toDouble(),
+          minY: minY,
+          maxY: maxY <= minY ? minY + 1 : maxY,
+          gridData: FlGridData(
+            show: true,
+            drawVerticalLine: false,
+            getDrawingHorizontalLine: (_) =>
+                FlLine(color: c.line2, strokeWidth: 0.5),
+          ),
+          borderData: FlBorderData(show: false),
+          titlesData: const FlTitlesData(
+            leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          ),
+          lineTouchData: LineTouchData(
+            touchTooltipData: LineTouchTooltipData(
+              tooltipRoundedRadius: 8,
+              getTooltipItems: (spots) => spots.map((spot) {
+                final index =
+                    spot.x.round().clamp(0, points.length - 1).toInt();
+                final point = points[index];
+                return LineTooltipItem(
+                  '${fmtDate(point.day, 'short')}\n${point.label}',
+                  TextStyle(color: c.bg, fontWeight: FontWeight.w700),
+                );
+              }).toList(),
+            ),
+          ),
+          lineBarsData: [
+            LineChartBarData(
+              spots: spots,
+              isCurved: true,
+              color: color,
+              barWidth: 2.5,
+              dotData: FlDotData(show: spots.length <= 14),
+              belowBarData: BarAreaData(show: false),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RangeChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final AppColors c;
+
+  const _RangeChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    required this.c,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? c.ink : c.surface2,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: selected ? c.ink : c.line2, width: 0.5),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? c.bg : c.ink,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1332,24 +1715,121 @@ List<_BatchUsageAverage> _averageBatchUsageByMonth(List<_UsageRow> rows) {
   return averages;
 }
 
+class _TrendPoint {
+  final String day;
+  final double? sugar;
+  final String sugarUnit;
+  final double insulin;
+
+  const _TrendPoint({
+    required this.day,
+    required this.sugar,
+    required this.sugarUnit,
+    required this.insulin,
+  });
+}
+
+class _ChartPoint {
+  final String day;
+  final double value;
+  final String label;
+
+  const _ChartPoint({
+    required this.day,
+    required this.value,
+    required this.label,
+  });
+}
+
+List<_TrendPoint> _trendPoints(
+    List<_UsageRow> rows, List<BloodSugarLog> logs, DateTimeRange range,
+    {String? insulinType}) {
+  final sugarByDay = <String, List<BloodSugarLog>>{};
+  for (final log in logs) {
+    final day = _parseDay(log.measuredAt);
+    if (day == null || !_inRange(day, range)) continue;
+    (sugarByDay[_dayKey(day)] ??= []).add(log);
+  }
+
+  final insulinByDay = <String, double>{};
+  for (final row in rows) {
+    if (insulinType != null && row.itemName != insulinType) continue;
+    final day = _parseDay(row.usage.date);
+    if (day == null || !_inRange(day, range)) continue;
+    final key = _dayKey(day);
+    insulinByDay[key] = (insulinByDay[key] ?? 0) + row.usage.units;
+  }
+
+  final points = <_TrendPoint>[];
+  var cursor = DateTime(range.start.year, range.start.month, range.start.day);
+  final end = DateTime(range.end.year, range.end.month, range.end.day);
+  while (!cursor.isAfter(end)) {
+    final key = _dayKey(cursor);
+    final dayLogs = sugarByDay[key] ?? const <BloodSugarLog>[];
+    final average = _averageSugar(dayLogs);
+    final unit = dayLogs.isEmpty ? 'mg/dL' : dayLogs.last.unit;
+    points.add(_TrendPoint(
+      day: key,
+      sugar: average,
+      sugarUnit: unit,
+      insulin: insulinByDay[key] ?? 0,
+    ));
+    cursor = cursor.add(const Duration(days: 1));
+  }
+  return points;
+}
+
+double? _averageSugar(Iterable<BloodSugarLog> logs) {
+  var count = 0;
+  var total = 0.0;
+  for (final log in logs) {
+    count++;
+    total += log.level;
+  }
+  return count == 0 ? null : total / count;
+}
+
+DateTime? _parseDay(String value) {
+  final parsed = DateTime.tryParse(value);
+  if (parsed == null) return null;
+  return DateTime(parsed.year, parsed.month, parsed.day);
+}
+
+bool _inRange(DateTime day, DateTimeRange range) {
+  final start = DateTime(range.start.year, range.start.month, range.start.day);
+  final end = DateTime(range.end.year, range.end.month, range.end.day);
+  return !day.isBefore(start) && !day.isAfter(end);
+}
+
+String _dayKey(DateTime day) =>
+    '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
+
+String _fmtDateTime(String value) {
+  final date = fmtDate(value, 'short');
+  final time = fmtDate(value, 'time');
+  if (date.isEmpty) return time;
+  if (time.isEmpty) return date;
+  return '$date $time';
+}
+
 String _title(InsulinPageView view) => switch (view) {
-      InsulinPageView.home => 'Insulin',
-      InsulinPageView.activity => 'Insulin Activity',
-      InsulinPageView.reports => 'Insulin Reports',
+      InsulinPageView.home => 'Diabetic',
+      InsulinPageView.activity => 'Diabetic Activity',
+      InsulinPageView.reports => 'Diabetic Reports',
     };
 
 String _addTitle(InsulinAddKind kind) => switch (kind) {
       InsulinAddKind.type => 'Add insulin type',
       InsulinAddKind.assign => 'Add insulin batch',
       InsulinAddKind.usage => 'Add insulin usage',
-      InsulinAddKind.bloodSugar => 'Add blood sugar',
+      InsulinAddKind.bloodSugar => 'Add blood sugar level',
     };
 
 String _saveLabel(InsulinAddKind kind) => switch (kind) {
       InsulinAddKind.type => 'Save type',
       InsulinAddKind.assign => 'Save batch',
       InsulinAddKind.usage => 'Save usage',
-      InsulinAddKind.bloodSugar => 'Save blood sugar',
+      InsulinAddKind.bloodSugar => 'Save blood sugar level',
     };
 
 String _fmtNum(double n) =>

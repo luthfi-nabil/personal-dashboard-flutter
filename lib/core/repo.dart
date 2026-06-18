@@ -51,18 +51,65 @@ class Repo {
   /// remote [data] so they remain visible until [syncPendingTransactions]
   /// pushes them.
   Future<AppData> _withPending(AppData data, String userId) async {
-    final pending = await AppDb.instance.getPendingTransactions(userId);
-    if (pending.isEmpty) return data;
-    final transactions = [...pending, ...data.transactions]
-      ..sort((a, b) => b.date.compareTo(a.date));
+    final results = await Future.wait([
+      AppDb.instance.getPendingTransactions(userId),
+      AppDb.instance.getPendingInsulinItems(userId),
+      AppDb.instance.getPendingInsulinAssigns(userId),
+      AppDb.instance.getPendingInsulinUsages(userId),
+      AppDb.instance.getPendingBloodSugarLogs(userId),
+    ]);
+    final pendingTransactions = results[0] as List<Transaction>;
+    final pendingInsulinItems = results[1] as List<InsulinItem>;
+    final pendingInsulinAssigns = results[2] as List<InsulinAssign>;
+    final pendingInsulinUsages = results[3] as List<InsulinUsage>;
+    final pendingBloodSugarLogs = results[4] as List<BloodSugarLog>;
+    if (results.every((rows) => rows.isEmpty)) return data;
+
+    List<T> mergePending<T>(
+      List<T> pending,
+      List<T> current,
+      String Function(T item) idOf,
+    ) {
+      final pendingIds = pending.map(idOf).toSet();
+      return [
+        ...pending,
+        ...current.where((item) => !pendingIds.contains(idOf(item))),
+      ];
+    }
+
+    final transactions = mergePending(
+      pendingTransactions,
+      data.transactions,
+      (transaction) => transaction.id,
+    )..sort((a, b) => b.date.compareTo(a.date));
+    final insulinItems = mergePending(
+      pendingInsulinItems,
+      data.insulinItems,
+      (item) => item.id,
+    );
+    final insulinAssigns = mergePending(
+      pendingInsulinAssigns,
+      data.insulinAssigns,
+      (assign) => assign.id,
+    );
+    final insulinUsages = mergePending(
+      pendingInsulinUsages,
+      data.insulinUsages,
+      (usage) => usage.id,
+    )..sort((a, b) => b.date.compareTo(a.date));
+    final bloodSugarLogs = mergePending(
+      pendingBloodSugarLogs,
+      data.bloodSugarLogs,
+      (log) => log.id,
+    )..sort((a, b) => b.measuredAt.compareTo(a.measuredAt));
     return AppData(
       sources: data.sources,
       categories: data.categories,
       transactions: transactions,
-      insulinItems: data.insulinItems,
-      insulinAssigns: data.insulinAssigns,
-      insulinUsages: data.insulinUsages,
-      bloodSugarLogs: data.bloodSugarLogs,
+      insulinItems: insulinItems,
+      insulinAssigns: insulinAssigns,
+      insulinUsages: insulinUsages,
+      bloodSugarLogs: bloodSugarLogs,
     );
   }
 
@@ -153,6 +200,7 @@ class Repo {
     var insulinAssigns = <InsulinAssign>[];
     var insulinUsages = <InsulinUsage>[];
     var bloodSugarLogs = <BloodSugarLog>[];
+    var healthFetched = false;
     try {
       final healthResults = await Future.wait([
         api.getInsulinItems(),
@@ -164,13 +212,14 @@ class Repo {
       insulinAssigns = healthResults[1].map(InsulinAssign.fromMap).toList();
       insulinUsages = healthResults[2].map(InsulinUsage.fromMap).toList();
       bloodSugarLogs = healthResults[3].map(BloodSugarLog.fromMap).toList();
+      healthFetched = true;
     } catch (_) {
       // health-api may be unreachable independently of transaction-api
     }
-    if (insulinUsages.isEmpty) {
+    if (!healthFetched) {
+      insulinItems = await AppDb.instance.getInsulinItems(cfg.userId);
+      insulinAssigns = await AppDb.instance.getInsulinAssigns(cfg.userId);
       insulinUsages = await AppDb.instance.getInsulinUsages(cfg.userId);
-    }
-    if (bloodSugarLogs.isEmpty) {
       bloodSugarLogs = await AppDb.instance.getBloodSugarLogs(cfg.userId);
     }
 
@@ -454,8 +503,12 @@ class Repo {
 
   Future<void> _queuePending(Transaction t) async {
     await AppDb.instance.putTransaction(t, _userId);
-    final pending = await AppDb.instance.getPendingTransactions(_userId);
-    SyncService.instance.updatePendingCount(pending.length);
+    await _refreshPendingCount();
+  }
+
+  Future<void> _refreshPendingCount() async {
+    final pending = await AppDb.instance.getPendingWriteCount(_userId);
+    SyncService.instance.updatePendingCount(pending);
   }
 
   /// Retries transactions queued while in "local mode". Stops at the first
@@ -469,7 +522,8 @@ class Repo {
     final cfg = _cfg;
     final pending = await AppDb.instance.getPendingTransactions(cfg.userId);
     if (pending.isEmpty) {
-      SyncService.instance.updatePendingCount(0);
+      SyncService.instance.updatePendingCount(
+          await AppDb.instance.getPendingWriteCount(cfg.userId));
       return;
     }
 
@@ -548,8 +602,8 @@ class Repo {
       }
     }
 
-    final remaining = await AppDb.instance.getPendingTransactions(cfg.userId);
-    SyncService.instance.updatePendingCount(remaining.length);
+    SyncService.instance.updatePendingCount(
+        await AppDb.instance.getPendingWriteCount(cfg.userId));
   }
 
   // ── Insulin ──────────────────────────────────────────────────────────
@@ -559,9 +613,26 @@ class Repo {
     required String uom,
     String? notes,
   }) async {
-    final m = await RemoteApi(_cfg)
-        .createInsulinItem(name: name, units: units, uom: uom, notes: notes);
-    return InsulinItem.fromMap(m);
+    try {
+      final m = await RemoteApi(_cfg)
+          .createInsulinItem(name: name, units: units, uom: uom, notes: notes);
+      final item = InsulinItem.fromMap(m);
+      await AppDb.instance.putInsulinItem(item, _userId);
+      return item;
+    } on ApiUnavailableException {
+      final item = InsulinItem(
+        id: _uuid.v4(),
+        name: name,
+        units: units,
+        uom: uom,
+        date: _nowIso(),
+        notes: notes,
+        syncState: 'pending',
+      );
+      await AppDb.instance.putInsulinItem(item, _userId);
+      await _refreshPendingCount();
+      return item;
+    }
   }
 
   Future<InsulinAssign> createInsulinAssign({
@@ -569,9 +640,28 @@ class Repo {
     required String batchNo,
     String? notes,
   }) async {
-    final m = await RemoteApi(_cfg).createInsulinAssign(
-        insulinItemId: itemId, batchNo: batchNo, notes: notes);
-    return InsulinAssign.fromMap(m);
+    try {
+      final m = await RemoteApi(_cfg).createInsulinAssign(
+          insulinItemId: itemId, batchNo: batchNo, notes: notes);
+      final assign = InsulinAssign.fromMap(m);
+      await AppDb.instance.putInsulinAssign(assign, _userId);
+      return assign;
+    } on ApiUnavailableException {
+      final item = await _cachedInsulinItem(itemId);
+      final assign = InsulinAssign(
+        id: _uuid.v4(),
+        itemId: itemId,
+        batchNo: batchNo,
+        date: _nowIso(),
+        itemName: item?.name ?? '',
+        totalUnits: item?.units ?? 0,
+        notes: notes,
+        syncState: 'pending',
+      );
+      await AppDb.instance.putInsulinAssign(assign, _userId);
+      await _refreshPendingCount();
+      return assign;
+    }
   }
 
   Future<void> deleteInsulinAssign(String id) =>
@@ -582,11 +672,25 @@ class Repo {
     required double units,
     String? notes,
   }) async {
-    final m = await RemoteApi(_cfg).createInsulinUsage(
-        insulinAssignId: assignId, units: units, notes: notes);
-    final usage = InsulinUsage.fromMap(m);
-    await AppDb.instance.putInsulinUsage(usage, _userId);
-    return usage;
+    try {
+      final m = await RemoteApi(_cfg).createInsulinUsage(
+          insulinAssignId: assignId, units: units, notes: notes);
+      final usage = InsulinUsage.fromMap(m);
+      await AppDb.instance.putInsulinUsage(usage, _userId);
+      return usage;
+    } on ApiUnavailableException {
+      final usage = InsulinUsage(
+        id: _uuid.v4(),
+        assignId: assignId,
+        units: units,
+        date: _nowIso(),
+        notes: notes,
+        syncState: 'pending',
+      );
+      await AppDb.instance.putInsulinUsage(usage, _userId);
+      await _refreshPendingCount();
+      return usage;
+    }
   }
 
   Future<BloodSugarLog> logBloodSugar({
@@ -595,14 +699,137 @@ class Repo {
     String? mealContext,
     String? notes,
   }) async {
-    final m = await RemoteApi(_cfg).createBloodSugarLog(
-      level: level,
-      unit: unit,
-      mealContext: mealContext,
-      notes: notes,
-    );
-    final log = BloodSugarLog.fromMap(m);
-    await AppDb.instance.putBloodSugarLog(log, _userId);
-    return log;
+    try {
+      final m = await RemoteApi(_cfg).createBloodSugarLog(
+        level: level,
+        unit: unit,
+        mealContext: mealContext,
+        notes: notes,
+      );
+      final log = BloodSugarLog.fromMap(m);
+      await AppDb.instance.putBloodSugarLog(log, _userId);
+      return log;
+    } on ApiUnavailableException {
+      final log = BloodSugarLog(
+        id: _uuid.v4(),
+        level: level,
+        unit: unit,
+        measuredAt: _nowIso(),
+        mealContext: mealContext,
+        notes: notes,
+        syncState: 'pending',
+      );
+      await AppDb.instance.putBloodSugarLog(log, _userId);
+      await _refreshPendingCount();
+      return log;
+    }
+  }
+
+  Future<void> syncPendingHealthWrites() async {
+    final cfg = _cfg;
+    final remote = RemoteApi(cfg);
+    final itemIdMap = <String, String>{};
+    final assignIdMap = <String, String>{};
+
+    for (final item
+        in await AppDb.instance.getPendingInsulinItems(cfg.userId)) {
+      try {
+        final m = await remote.createInsulinItem(
+          name: item.name,
+          units: item.units,
+          uom: item.uom,
+          notes: item.notes,
+        );
+        final synced = InsulinItem.fromMap(m);
+        itemIdMap[item.id] = synced.id;
+        await AppDb.instance.deleteInsulinItem(item.id, cfg.userId);
+        await AppDb.instance.putInsulinItem(synced, cfg.userId);
+      } on ApiUnavailableException {
+        break;
+      } catch (_) {
+        // Keep the pending row for a later retry.
+      }
+    }
+
+    final unresolvedItems = {
+      for (final item
+          in await AppDb.instance.getPendingInsulinItems(cfg.userId))
+        item.id
+    };
+    for (final assign
+        in await AppDb.instance.getPendingInsulinAssigns(cfg.userId)) {
+      final itemId = itemIdMap[assign.itemId] ?? assign.itemId;
+      if (unresolvedItems.contains(itemId)) continue;
+      try {
+        final m = await remote.createInsulinAssign(
+          insulinItemId: itemId,
+          batchNo: assign.batchNo,
+          notes: assign.notes,
+        );
+        final synced = InsulinAssign.fromMap(m);
+        assignIdMap[assign.id] = synced.id;
+        await AppDb.instance.deleteInsulinAssign(assign.id, cfg.userId);
+        await AppDb.instance.putInsulinAssign(synced, cfg.userId);
+      } on ApiUnavailableException {
+        break;
+      } catch (_) {
+        // Keep the pending row for a later retry.
+      }
+    }
+
+    final unresolvedAssigns = {
+      for (final assign
+          in await AppDb.instance.getPendingInsulinAssigns(cfg.userId))
+        assign.id
+    };
+    for (final usage
+        in await AppDb.instance.getPendingInsulinUsages(cfg.userId)) {
+      final assignId = assignIdMap[usage.assignId] ?? usage.assignId;
+      if (unresolvedAssigns.contains(assignId)) continue;
+      try {
+        final m = await remote.createInsulinUsage(
+          insulinAssignId: assignId,
+          units: usage.units,
+          notes: usage.notes,
+        );
+        final synced = InsulinUsage.fromMap(m);
+        await AppDb.instance.deleteInsulinUsage(usage.id, cfg.userId);
+        await AppDb.instance.putInsulinUsage(synced, cfg.userId);
+      } on ApiUnavailableException {
+        break;
+      } catch (_) {
+        // Keep the pending row for a later retry.
+      }
+    }
+
+    for (final log
+        in await AppDb.instance.getPendingBloodSugarLogs(cfg.userId)) {
+      try {
+        final m = await remote.createBloodSugarLog(
+          level: log.level,
+          unit: log.unit,
+          mealContext: log.mealContext,
+          notes: log.notes,
+        );
+        final synced = BloodSugarLog.fromMap(m);
+        await AppDb.instance.deleteBloodSugarLog(log.id, cfg.userId);
+        await AppDb.instance.putBloodSugarLog(synced, cfg.userId);
+      } on ApiUnavailableException {
+        break;
+      } catch (_) {
+        // Keep the pending row for a later retry.
+      }
+    }
+
+    SyncService.instance.updatePendingCount(
+        await AppDb.instance.getPendingWriteCount(cfg.userId));
+  }
+
+  Future<InsulinItem?> _cachedInsulinItem(String id) async {
+    final items = await AppDb.instance.getInsulinItems(_userId);
+    for (final item in items) {
+      if (item.id == id) return item;
+    }
+    return null;
   }
 }

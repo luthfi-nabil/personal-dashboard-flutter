@@ -73,7 +73,7 @@ class AppMenuDrawer extends ConsumerWidget {
             _MenuTile(
               icon: Icons.vaccines_outlined,
               selectedIcon: Icons.vaccines_rounded,
-              label: 'Insulin',
+              label: 'Diabetic',
               route: '/insulin',
               selected: currentPath.startsWith('/insulin'),
               c: c,

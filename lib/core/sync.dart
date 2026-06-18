@@ -24,7 +24,7 @@ class SyncService {
   SyncStatus _status = SyncStatus.idle;
   SyncStatus get status => _status;
 
-  /// Number of transactions saved locally because the API was unreachable
+  /// Number of records saved locally because the API was unreachable
   /// and not yet pushed to the server. `pendingCount > 0` means the app is
   /// in "local mode" for those writes.
   int _pendingCount = 0;
@@ -48,7 +48,7 @@ class SyncService {
   void removePendingListener(void Function(int) l) =>
       _pendingListeners.remove(l);
 
-  /// Called by [Repo] whenever a transaction is queued or flushed locally.
+  /// Called by [Repo] whenever a record is queued or flushed locally.
   void updatePendingCount(int count) {
     if (_pendingCount == count) return;
     _pendingCount = count;
@@ -83,9 +83,9 @@ class SyncService {
   }
 
   Future<void> _refreshPendingCount(String userId) async {
-    final pending = await AppDb.instance.getPendingTransactions(userId);
+    final pending = await AppDb.instance.getPendingWriteCount(userId);
     if (ConfigService.instance.current.userId == userId) {
-      updatePendingCount(pending.length);
+      updatePendingCount(pending);
     }
   }
 
@@ -97,6 +97,7 @@ class SyncService {
     _emit(SyncStatus.syncing);
     try {
       await Repo.instance.syncPendingTransactions();
+      await Repo.instance.syncPendingHealthWrites();
       await onRefresh?.call();
       _emit(SyncStatus.done);
     } catch (_) {
