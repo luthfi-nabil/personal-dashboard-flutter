@@ -67,6 +67,10 @@ class AppMenuDrawer extends ConsumerWidget {
               label: 'Finance',
               route: '/',
               selected: !currentPath.startsWith('/insulin') &&
+                  !currentPath.startsWith('/activities') &&
+                  !currentPath.startsWith('/wishlist') &&
+                  !currentPath.startsWith('/planned-expenses') &&
+                  !currentPath.startsWith('/routine-transactions') &&
                   currentPath != '/settings',
               c: c,
             ),
@@ -76,6 +80,31 @@ class AppMenuDrawer extends ConsumerWidget {
               label: 'Diabetic',
               route: '/insulin',
               selected: currentPath.startsWith('/insulin'),
+              c: c,
+            ),
+            _MenuTile(
+              icon: Icons.checklist_rounded,
+              selectedIcon: Icons.fact_check_rounded,
+              label: 'Activities',
+              route: '/activities',
+              selected: currentPath.startsWith('/activities'),
+              c: c,
+            ),
+            _MenuTile(
+              icon: Icons.bookmark_border_rounded,
+              selectedIcon: Icons.bookmark_rounded,
+              label: 'Planned Expenses',
+              route: '/planned-expenses',
+              selected: currentPath.startsWith('/planned-expenses') ||
+                  currentPath.startsWith('/wishlist'),
+              c: c,
+            ),
+            _MenuTile(
+              icon: Icons.repeat_rounded,
+              selectedIcon: Icons.repeat_on_rounded,
+              label: 'Routine Transaction',
+              route: '/routine-transactions',
+              selected: currentPath.startsWith('/routine-transactions'),
               c: c,
             ),
             _MenuTile(

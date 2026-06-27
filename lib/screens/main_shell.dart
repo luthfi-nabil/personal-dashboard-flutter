@@ -27,6 +27,8 @@ class MainShell extends ConsumerWidget {
       currentIndex = 2;
     } else if (location.startsWith('/options')) {
       currentIndex = 3;
+    } else if (location.startsWith('/activities')) {
+      currentIndex = -1;
     }
 
     return Scaffold(
@@ -43,15 +45,16 @@ class MainShell extends ConsumerWidget {
           Expanded(child: child),
         ],
       ),
-      floatingActionButton: currentIndex >= 0
-          ? FloatingActionButton(
-              onPressed: () => context.push('/add'),
-              backgroundColor: c.ink,
-              foregroundColor: c.bg,
-              elevation: 8,
-              child: const Icon(Icons.add, size: 26),
-            )
-          : null,
+      floatingActionButton:
+          currentIndex >= 0 && !location.startsWith('/options')
+              ? FloatingActionButton(
+                  onPressed: () => context.push('/add'),
+                  backgroundColor: c.ink,
+                  foregroundColor: c.bg,
+                  elevation: 8,
+                  child: const Icon(Icons.add, size: 26),
+                )
+              : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar: currentIndex >= 0
           ? _BottomBar(currentIndex: currentIndex, c: c)

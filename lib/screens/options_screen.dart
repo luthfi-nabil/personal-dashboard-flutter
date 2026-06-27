@@ -116,7 +116,8 @@ class _OptionsScreenState extends ConsumerState<OptionsScreen> {
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
-              children: ['all', 'spending', 'earning'].map((kind) {
+              children:
+                  ['all', 'spending', 'earning'].map((kind) {
                 final active = _categoryFilter == kind;
                 return Padding(
                   padding: const EdgeInsets.only(right: 6),
@@ -154,6 +155,8 @@ class _OptionsScreenState extends ConsumerState<OptionsScreen> {
           Builder(builder: (_) {
             final filtered = _categoryFilter == 'all'
                 ? data.categories
+                    .where((cat) => cat.kind != 'planned_expense')
+                    .toList()
                 : data.categories
                     .where((cat) => cat.kind == _categoryFilter)
                     .toList();
@@ -199,6 +202,11 @@ class _OptionsScreenState extends ConsumerState<OptionsScreen> {
               }).toList(),
             );
           }),
+          const SizedBox(height: 10),
+          Text(
+            'Planned expense categories are managed in Planned Expenses → Categories.',
+            style: TextStyle(fontSize: 12, color: c.muted),
+          ),
         ],
       ),
     );
@@ -247,7 +255,7 @@ class _EmptyPanel extends StatelessWidget {
 
 class _SourceEditorSheet extends ConsumerStatefulWidget {
   final Source? source;
-  final VoidCallback onSaved;
+  final Future<void> Function() onSaved;
 
   const _SourceEditorSheet({this.source, required this.onSaved});
 
@@ -286,7 +294,7 @@ class _SourceEditorSheetState extends ConsumerState<_SourceEditorSheet> {
       await AppDb.instance
           .putSource(widget.source!.copyWith(kind: _kind), userId);
     }
-    widget.onSaved();
+    await widget.onSaved();
     if (mounted) Navigator.pop(context);
   }
 
@@ -307,7 +315,7 @@ class _SourceEditorSheetState extends ConsumerState<_SourceEditorSheet> {
     );
     if (confirmed != true || !mounted) return;
     await Repo.instance.deleteSource(widget.source!.id);
-    widget.onSaved();
+    await widget.onSaved();
     if (mounted) Navigator.pop(context);
   }
 
@@ -381,7 +389,7 @@ class _SourceEditorSheetState extends ConsumerState<_SourceEditorSheet> {
 
 class _CategoryEditorSheet extends ConsumerStatefulWidget {
   final Category? category;
-  final VoidCallback onSaved;
+  final Future<void> Function() onSaved;
 
   const _CategoryEditorSheet({this.category, required this.onSaved});
 
@@ -413,7 +421,7 @@ class _CategoryEditorSheetState extends ConsumerState<_CategoryEditorSheet> {
     final name = _nameCtl.text.trim();
     if (name.isEmpty) return;
     await Repo.instance.createCategory(name: name, kind: _kind);
-    widget.onSaved();
+    await widget.onSaved();
     if (mounted) Navigator.pop(context);
   }
 
@@ -435,7 +443,7 @@ class _CategoryEditorSheetState extends ConsumerState<_CategoryEditorSheet> {
     if (confirmed != true || !mounted) return;
     await Repo.instance
         .deleteCategory(id: widget.category!.id, kind: widget.category!.kind);
-    widget.onSaved();
+    await widget.onSaved();
     if (mounted) Navigator.pop(context);
   }
 
@@ -478,6 +486,8 @@ class _CategoryEditorSheetState extends ConsumerState<_CategoryEditorSheet> {
               items: const [
                 DropdownMenuItem(value: 'spending', child: Text('spending')),
                 DropdownMenuItem(value: 'earning', child: Text('earning')),
+                DropdownMenuItem(
+                    value: 'planned_expense', child: Text('planned expense')),
               ],
               onChanged: widget.category != null
                   ? null

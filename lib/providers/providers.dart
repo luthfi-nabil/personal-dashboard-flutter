@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/models.dart';
 import '../core/repo.dart';
@@ -7,18 +9,28 @@ import '../core/sync.dart';
 // ── App data ────────────────────────────────────────────────────────────────
 class AppDataNotifier extends AutoDisposeAsyncNotifier<AppData> {
   @override
-  Future<AppData> build() {
+  Future<AppData> build() async {
     // Rebuild the cached/remote data view whenever the active account
     // changes. Without this dependency, the provider survives logout/login
     // and can keep showing the previous user's AppData.
     ref.watch(configProvider.select((cfg) => cfg.userId));
-    SyncService.instance.onRefresh = refresh;
+    SyncService.instance.onRefresh = refreshRemote;
     ref.onDispose(() => SyncService.instance.onRefresh = null);
-    return Repo.instance.all();
+    final cached = await Repo.instance.cached();
+    unawaited(SyncService.instance.syncNow());
+    return cached;
   }
 
   Future<void> refresh() async {
-    state = await AsyncValue.guard(() => Repo.instance.all());
+    state = await AsyncValue.guard(() => Repo.instance.cached());
+    await SyncService.instance.syncNow();
+  }
+
+  Future<void> refreshRemote() async {
+    final remote = await Repo.instance.refreshRemote();
+    if (remote != null) {
+      state = AsyncValue.data(remote);
+    }
   }
 }
 

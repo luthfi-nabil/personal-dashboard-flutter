@@ -218,10 +218,9 @@ class AppConfig {
     return DateTime.now().isAfter(exp);
   }
 
-  /// The app is "logged in" once login-api has issued a JWT (used as a
-  /// Bearer token for transaction-api / health-api `/api/user/...` routes)
-  /// and that token hasn't expired yet.
-  bool get isLoggedIn => authToken.trim().isNotEmpty && !isTokenExpired;
+  /// The app is "logged in" once login-api has issued a JWT. Expiry is left
+  /// to the API so the mobile app does not proactively discard saved sessions.
+  bool get isLoggedIn => authToken.trim().isNotEmpty;
 
   /// Kept as an alias of [isLoggedIn] for call sites that historically
   /// checked whether the app was "configured".
@@ -306,6 +305,9 @@ class AppData {
   final List<Source> sources;
   final List<Category> categories;
   final List<Transaction> transactions;
+  final List<WishlistItem> wishlistItems;
+  final List<RoutineTransaction> routineTransactions;
+  final List<RoutinePayment> routinePayments;
   final List<InsulinItem> insulinItems;
   final List<InsulinAssign> insulinAssigns;
   final List<InsulinUsage> insulinUsages;
@@ -315,11 +317,369 @@ class AppData {
     required this.sources,
     required this.categories,
     required this.transactions,
+    this.wishlistItems = const [],
+    this.routineTransactions = const [],
+    this.routinePayments = const [],
     this.insulinItems = const [],
     this.insulinAssigns = const [],
     this.insulinUsages = const [],
     this.bloodSugarLogs = const [],
   });
+}
+
+class ActivityTemplate {
+  final String id;
+  final String title;
+  final String notes;
+  final String category;
+  final int sortOrder;
+  final String createdAt;
+  final String updatedAt;
+
+  const ActivityTemplate({
+    required this.id,
+    required this.title,
+    this.notes = '',
+    this.category = '',
+    this.sortOrder = 0,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory ActivityTemplate.fromMap(Map<String, dynamic> m) => ActivityTemplate(
+        id: m['id'] as String,
+        title: m['title'] as String,
+        notes: m['notes'] as String? ?? '',
+        category: m['category'] as String? ?? '',
+        sortOrder: (m['sortOrder'] as num?)?.toInt() ?? 0,
+        createdAt: m['createdAt'] as String,
+        updatedAt: m['updatedAt'] as String,
+      );
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'title': title,
+        'notes': notes,
+        'category': category,
+        'sortOrder': sortOrder,
+        'createdAt': createdAt,
+        'updatedAt': updatedAt,
+      };
+}
+
+class DailyActivity {
+  final String id;
+  final String templateId;
+  final String title;
+  final String notes;
+  final String category;
+  final String activityDate;
+  final String doneAt;
+
+  const DailyActivity({
+    required this.id,
+    required this.templateId,
+    required this.title,
+    this.notes = '',
+    this.category = '',
+    required this.activityDate,
+    required this.doneAt,
+  });
+
+  factory DailyActivity.fromMap(Map<String, dynamic> m) => DailyActivity(
+        id: m['id'] as String,
+        templateId: m['templateId'] as String? ?? '',
+        title: m['title'] as String,
+        notes: m['notes'] as String? ?? '',
+        category: m['category'] as String? ?? '',
+        activityDate: m['activityDate'] as String,
+        doneAt: m['doneAt'] as String,
+      );
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'templateId': templateId,
+        'title': title,
+        'notes': notes,
+        'category': category,
+        'activityDate': activityDate,
+        'doneAt': doneAt,
+      };
+}
+
+class WishlistItem {
+  final String id;
+  final String itemName;
+  final double price;
+  final String transactionType;
+  final String? categoryId;
+  final String? categoryName;
+  final String? notes;
+  final String priority;
+  final String status;
+  final double? fulfilledPrice;
+  final String? fulfilledAt;
+  final String? canceledAt;
+  final String createdDate;
+  final String updatedAt;
+  final String syncState;
+
+  const WishlistItem({
+    required this.id,
+    required this.itemName,
+    required this.price,
+    this.transactionType = 'spending',
+    this.categoryId,
+    this.categoryName,
+    this.notes,
+    required this.priority,
+    this.status = 'active',
+    this.fulfilledPrice,
+    this.fulfilledAt,
+    this.canceledAt,
+    required this.createdDate,
+    required this.updatedAt,
+    this.syncState = 'synced',
+  });
+
+  factory WishlistItem.fromMap(Map<String, dynamic> m) => WishlistItem(
+        id: m['planned_expense_id'] as String? ??
+            m['wishlist_id'] as String? ??
+            m['id'] as String,
+        itemName: m['item_name'] as String? ?? m['itemName'] as String,
+        price: (m['price'] as num).toDouble(),
+        transactionType: m['transaction_type'] as String? ??
+            m['transactionType'] as String? ??
+            'spending',
+        categoryId: m['category_id'] as String? ?? m['categoryId'] as String?,
+        categoryName: m['category'] as String? ??
+            m['category_name'] as String? ??
+            m['categoryName'] as String?,
+        notes: m['notes'] as String?,
+        priority: m['priority'] as String? ?? 'medium',
+        status: m['status'] as String? ?? 'active',
+        fulfilledPrice:
+            ((m['fulfilled_price'] ?? m['fulfilledPrice']) as num?)?.toDouble(),
+        fulfilledAt:
+            m['fulfilled_at'] as String? ?? m['fulfilledAt'] as String?,
+        canceledAt: m['canceled_at'] as String? ?? m['canceledAt'] as String?,
+        createdDate: m['created_date'] as String? ?? m['createdDate'] as String,
+        updatedAt: m['updated_date'] as String? ??
+            m['updatedAt'] as String? ??
+            m['created_date'] as String? ??
+            m['createdDate'] as String,
+        syncState: m['syncState'] as String? ?? 'synced',
+      );
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'itemName': itemName,
+        'price': price,
+        'transactionType': transactionType,
+        'categoryId': categoryId,
+        'categoryName': categoryName,
+        'notes': notes,
+        'priority': priority,
+        'status': status,
+        'fulfilledPrice': fulfilledPrice,
+        'fulfilledAt': fulfilledAt,
+        'canceledAt': canceledAt,
+        'createdDate': createdDate,
+        'updatedAt': updatedAt,
+        'syncState': syncState,
+      };
+
+  WishlistItem copyWith({
+    String? id,
+    String? itemName,
+    double? price,
+    String? transactionType,
+    String? categoryId,
+    String? categoryName,
+    String? notes,
+    String? priority,
+    String? status,
+    double? fulfilledPrice,
+    String? fulfilledAt,
+    String? canceledAt,
+    String? createdDate,
+    String? updatedAt,
+    String? syncState,
+  }) =>
+      WishlistItem(
+        id: id ?? this.id,
+        itemName: itemName ?? this.itemName,
+        price: price ?? this.price,
+        transactionType: transactionType ?? this.transactionType,
+        categoryId: categoryId ?? this.categoryId,
+        categoryName: categoryName ?? this.categoryName,
+        notes: notes ?? this.notes,
+        priority: priority ?? this.priority,
+        status: status ?? this.status,
+        fulfilledPrice: fulfilledPrice ?? this.fulfilledPrice,
+        fulfilledAt: fulfilledAt ?? this.fulfilledAt,
+        canceledAt: canceledAt ?? this.canceledAt,
+        createdDate: createdDate ?? this.createdDate,
+        updatedAt: updatedAt ?? this.updatedAt,
+        syncState: syncState ?? this.syncState,
+      );
+}
+
+class RoutineTransaction {
+  final String id;
+  final String itemName;
+  final double price;
+  final String reminder;
+  final String categoryId;
+  final String categoryName;
+  final String status;
+  final String? lastBoughtAt;
+  final String createdDate;
+  final String updatedAt;
+  final String syncState;
+
+  const RoutineTransaction({
+    required this.id,
+    required this.itemName,
+    required this.price,
+    required this.reminder,
+    required this.categoryId,
+    required this.categoryName,
+    this.status = 'active',
+    this.lastBoughtAt,
+    required this.createdDate,
+    required this.updatedAt,
+    this.syncState = 'synced',
+  });
+
+  factory RoutineTransaction.fromMap(Map<String, dynamic> m) =>
+      RoutineTransaction(
+        id: m['routine_id'] as String? ?? m['id'] as String,
+        itemName: m['item_name'] as String? ?? m['itemName'] as String,
+        price: (m['price'] as num).toDouble(),
+        reminder: m['reminder'] as String? ?? 'monthly',
+        categoryId:
+            m['spending_category_id'] as String? ?? m['categoryId'] as String,
+        categoryName:
+            m['spending_category'] as String? ?? m['categoryName'] as String,
+        status: m['status'] as String? ?? 'active',
+        lastBoughtAt:
+            m['last_bought_at'] as String? ?? m['lastBoughtAt'] as String?,
+        createdDate: m['created_date'] as String? ?? m['createdDate'] as String,
+        updatedAt: m['updated_date'] as String? ??
+            m['updatedAt'] as String? ??
+            m['created_date'] as String? ??
+            m['createdDate'] as String,
+        syncState: m['syncState'] as String? ?? 'synced',
+      );
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'itemName': itemName,
+        'price': price,
+        'reminder': reminder,
+        'categoryId': categoryId,
+        'categoryName': categoryName,
+        'status': status,
+        'lastBoughtAt': lastBoughtAt,
+        'createdDate': createdDate,
+        'updatedAt': updatedAt,
+        'syncState': syncState,
+      };
+
+  RoutineTransaction copyWith({
+    String? id,
+    String? itemName,
+    double? price,
+    String? reminder,
+    String? categoryId,
+    String? categoryName,
+    String? status,
+    String? lastBoughtAt,
+    String? createdDate,
+    String? updatedAt,
+    String? syncState,
+  }) =>
+      RoutineTransaction(
+        id: id ?? this.id,
+        itemName: itemName ?? this.itemName,
+        price: price ?? this.price,
+        reminder: reminder ?? this.reminder,
+        categoryId: categoryId ?? this.categoryId,
+        categoryName: categoryName ?? this.categoryName,
+        status: status ?? this.status,
+        lastBoughtAt: lastBoughtAt ?? this.lastBoughtAt,
+        createdDate: createdDate ?? this.createdDate,
+        updatedAt: updatedAt ?? this.updatedAt,
+        syncState: syncState ?? this.syncState,
+      );
+}
+
+class RoutinePayment {
+  final String id;
+  final String routineId;
+  final String itemName;
+  final double price;
+  final String categoryId;
+  final String categoryName;
+  final String sourceId;
+  final String sourceName;
+  final String boughtAt;
+  final String syncState;
+
+  const RoutinePayment({
+    required this.id,
+    required this.routineId,
+    required this.itemName,
+    required this.price,
+    required this.categoryId,
+    required this.categoryName,
+    required this.sourceId,
+    required this.sourceName,
+    required this.boughtAt,
+    this.syncState = 'synced',
+  });
+
+  factory RoutinePayment.fromMap(Map<String, dynamic> m) => RoutinePayment(
+        id: m['routine_payment_id'] as String? ?? m['id'] as String,
+        routineId: m['routine_id'] as String? ?? m['routineId'] as String,
+        itemName: m['item_name'] as String? ?? m['itemName'] as String,
+        price: (m['price'] as num).toDouble(),
+        categoryId:
+            m['spending_category_id'] as String? ?? m['categoryId'] as String,
+        categoryName:
+            m['spending_category'] as String? ?? m['categoryName'] as String,
+        sourceId: m['source_id'] as String? ?? m['sourceId'] as String,
+        sourceName: m['source'] as String? ?? m['sourceName'] as String,
+        boughtAt: m['bought_at'] as String? ?? m['boughtAt'] as String,
+        syncState: m['syncState'] as String? ?? 'synced',
+      );
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'routineId': routineId,
+        'itemName': itemName,
+        'price': price,
+        'categoryId': categoryId,
+        'categoryName': categoryName,
+        'sourceId': sourceId,
+        'sourceName': sourceName,
+        'boughtAt': boughtAt,
+        'syncState': syncState,
+      };
+
+  RoutinePayment copyWith({String? syncState}) => RoutinePayment(
+        id: id,
+        routineId: routineId,
+        itemName: itemName,
+        price: price,
+        categoryId: categoryId,
+        categoryName: categoryName,
+        sourceId: sourceId,
+        sourceName: sourceName,
+        boughtAt: boughtAt,
+        syncState: syncState ?? this.syncState,
+      );
 }
 
 class InsulinItem {

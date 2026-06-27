@@ -8,6 +8,11 @@ const _userScopedTables = [
   'sources',
   'categories',
   'transactions',
+  'wishlist_items',
+  'routine_transactions',
+  'routine_payments',
+  'activity_templates',
+  'daily_activities',
   'insulin_items',
   'insulin_assigns',
   'insulin_usages',
@@ -35,7 +40,7 @@ class AppDb {
     _db = await factory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 6,
+        version: 10,
         onCreate: (db, _) async {
           await db.execute('''CREATE TABLE sources (
             id TEXT NOT NULL,
@@ -70,6 +75,55 @@ class AppDb {
             userId TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (id, userId)
           )''');
+          await db.execute('''CREATE TABLE wishlist_items (
+            id TEXT NOT NULL,
+            itemName TEXT NOT NULL,
+            price REAL NOT NULL,
+            transactionType TEXT NOT NULL DEFAULT 'spending',
+            categoryId TEXT,
+            categoryName TEXT,
+            notes TEXT,
+            priority TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            fulfilledPrice REAL,
+            fulfilledAt TEXT,
+            canceledAt TEXT,
+            createdDate TEXT NOT NULL,
+            updatedAt TEXT NOT NULL,
+            syncState TEXT DEFAULT 'synced',
+            userId TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (id, userId)
+          )''');
+          await db.execute('''CREATE TABLE routine_transactions (
+            id TEXT NOT NULL,
+            itemName TEXT NOT NULL,
+            price REAL NOT NULL,
+            reminder TEXT NOT NULL,
+            categoryId TEXT NOT NULL,
+            categoryName TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            lastBoughtAt TEXT,
+            createdDate TEXT NOT NULL,
+            updatedAt TEXT NOT NULL,
+            syncState TEXT DEFAULT 'synced',
+            userId TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (id, userId)
+          )''');
+          await db.execute('''CREATE TABLE routine_payments (
+            id TEXT NOT NULL,
+            routineId TEXT NOT NULL,
+            itemName TEXT NOT NULL,
+            price REAL NOT NULL,
+            categoryId TEXT NOT NULL,
+            categoryName TEXT NOT NULL,
+            sourceId TEXT NOT NULL,
+            sourceName TEXT NOT NULL,
+            boughtAt TEXT NOT NULL,
+            syncState TEXT DEFAULT 'synced',
+            userId TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (id, userId)
+          )''');
+          await _createActivityTables(db);
           await db.execute('''CREATE TABLE meta (
             key TEXT PRIMARY KEY,
             value TEXT
@@ -177,6 +231,25 @@ class AppDb {
             await _addColumnIfMissing(
                 db, 'blood_sugar_logs', "syncState TEXT DEFAULT 'synced'");
           }
+          if (oldVersion < 7) {
+            await _createWishlistAndRoutineTables(db);
+          }
+          if (oldVersion < 8) {
+            await _createActivityTables(db);
+          }
+          if (oldVersion < 9) {
+            await _addColumnIfMissing(
+                db, 'activity_templates', "category TEXT DEFAULT ''");
+            await _addColumnIfMissing(
+                db, 'daily_activities', "category TEXT DEFAULT ''");
+          }
+          if (oldVersion < 10) {
+            await _addColumnIfMissing(db, 'wishlist_items',
+                "transactionType TEXT NOT NULL DEFAULT 'spending'");
+            await _addColumnIfMissing(db, 'wishlist_items', 'categoryId TEXT');
+            await _addColumnIfMissing(
+                db, 'wishlist_items', 'categoryName TEXT');
+          }
         },
       ),
     );
@@ -199,6 +272,14 @@ class AppDb {
         where: 'id = ? AND userId = ?', whereArgs: [id, userId]);
   }
 
+  Future<List<Source>> getPendingSources(String userId) async {
+    final rows = await _db.query('sources',
+        where: "userId = ? AND syncState = 'pending'",
+        whereArgs: [userId],
+        orderBy: 'updatedAt ASC');
+    return rows.map(Source.fromMap).toList();
+  }
+
   // ── Categories ─────────────────────────────────────────────────────
   Future<List<Category>> getCategories(String userId) async {
     final rows =
@@ -214,6 +295,14 @@ class AppDb {
   Future<void> deleteCategory(String id, String userId) async {
     await _db.delete('categories',
         where: 'id = ? AND userId = ?', whereArgs: [id, userId]);
+  }
+
+  Future<List<Category>> getPendingCategories(String userId) async {
+    final rows = await _db.query('categories',
+        where: "userId = ? AND syncState = 'pending'",
+        whereArgs: [userId],
+        orderBy: 'updatedAt ASC');
+    return rows.map(Category.fromMap).toList();
   }
 
   // ── Transactions ───────────────────────────────────────────────────
@@ -244,6 +333,130 @@ class AppDb {
   }
 
   // ── Meta ───────────────────────────────────────────────────────────
+  // Wishlist
+  Future<List<WishlistItem>> getWishlistItems(String userId) async {
+    final rows = await _db.query('wishlist_items',
+        where: 'userId = ?', whereArgs: [userId], orderBy: 'updatedAt DESC');
+    return rows.map(WishlistItem.fromMap).toList();
+  }
+
+  Future<List<WishlistItem>> getPendingWishlistItems(String userId) async {
+    final rows = await _db.query('wishlist_items',
+        where: "userId = ? AND syncState = 'pending'",
+        whereArgs: [userId],
+        orderBy: 'updatedAt ASC');
+    return rows.map(WishlistItem.fromMap).toList();
+  }
+
+  Future<void> putWishlistItem(WishlistItem item, String userId) async {
+    await _db.insert('wishlist_items', {...item.toMap(), 'userId': userId},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteWishlistItem(String id, String userId) async {
+    await _db.delete('wishlist_items',
+        where: 'id = ? AND userId = ?', whereArgs: [id, userId]);
+  }
+
+  // Routine transactions
+  Future<List<RoutineTransaction>> getRoutineTransactions(String userId) async {
+    final rows = await _db.query('routine_transactions',
+        where: 'userId = ?', whereArgs: [userId], orderBy: 'updatedAt DESC');
+    return rows.map(RoutineTransaction.fromMap).toList();
+  }
+
+  Future<List<RoutineTransaction>> getPendingRoutineTransactions(
+      String userId) async {
+    final rows = await _db.query('routine_transactions',
+        where: "userId = ? AND syncState = 'pending'",
+        whereArgs: [userId],
+        orderBy: 'updatedAt ASC');
+    return rows.map(RoutineTransaction.fromMap).toList();
+  }
+
+  Future<void> putRoutineTransaction(
+      RoutineTransaction item, String userId) async {
+    await _db.insert(
+        'routine_transactions', {...item.toMap(), 'userId': userId},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteRoutineTransaction(String id, String userId) async {
+    await _db.delete('routine_transactions',
+        where: 'id = ? AND userId = ?', whereArgs: [id, userId]);
+  }
+
+  Future<List<RoutinePayment>> getRoutinePayments(String userId) async {
+    final rows = await _db.query('routine_payments',
+        where: 'userId = ?', whereArgs: [userId], orderBy: 'boughtAt DESC');
+    return rows.map(RoutinePayment.fromMap).toList();
+  }
+
+  Future<List<RoutinePayment>> getPendingRoutinePayments(String userId) async {
+    final rows = await _db.query('routine_payments',
+        where: "userId = ? AND syncState = 'pending'",
+        whereArgs: [userId],
+        orderBy: 'boughtAt ASC');
+    return rows.map(RoutinePayment.fromMap).toList();
+  }
+
+  Future<void> putRoutinePayment(RoutinePayment item, String userId) async {
+    await _db.insert('routine_payments', {...item.toMap(), 'userId': userId},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteRoutinePayment(String id, String userId) async {
+    await _db.delete('routine_payments',
+        where: 'id = ? AND userId = ?', whereArgs: [id, userId]);
+  }
+
+  // Activities
+  Future<List<ActivityTemplate>> getActivityTemplates(String userId) async {
+    final rows = await _db.query('activity_templates',
+        where: 'userId = ?',
+        whereArgs: [userId],
+        orderBy: 'sortOrder ASC, title ASC');
+    return rows.map(ActivityTemplate.fromMap).toList();
+  }
+
+  Future<void> putActivityTemplate(ActivityTemplate item, String userId) async {
+    await _db.insert('activity_templates', {...item.toMap(), 'userId': userId},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteActivityTemplate(String id, String userId) async {
+    await _db.delete('activity_templates',
+        where: 'id = ? AND userId = ?', whereArgs: [id, userId]);
+  }
+
+  Future<List<DailyActivity>> getDailyActivities(
+      String userId, String activityDate) async {
+    final rows = await _db.query('daily_activities',
+        where: 'userId = ? AND activityDate = ?',
+        whereArgs: [userId, activityDate],
+        orderBy: 'doneAt DESC');
+    return rows.map(DailyActivity.fromMap).toList();
+  }
+
+  Future<List<DailyActivity>> getDailyActivitiesBetween(
+      String userId, String startDate, String endDate) async {
+    final rows = await _db.query('daily_activities',
+        where: 'userId = ? AND activityDate BETWEEN ? AND ?',
+        whereArgs: [userId, startDate, endDate],
+        orderBy: 'activityDate DESC, doneAt DESC');
+    return rows.map(DailyActivity.fromMap).toList();
+  }
+
+  Future<void> putDailyActivity(DailyActivity item, String userId) async {
+    await _db.insert('daily_activities', {...item.toMap(), 'userId': userId},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteDailyActivity(String id, String userId) async {
+    await _db.delete('daily_activities',
+        where: 'id = ? AND userId = ?', whereArgs: [id, userId]);
+  }
+
   Future<String?> getMeta(String key) async {
     final rows = await _db.query('meta', where: 'key = ?', whereArgs: [key]);
     if (rows.isEmpty) return null;
@@ -355,7 +568,8 @@ class AppDb {
   // ── Bulk replace (online-first cache refresh) ───────────────────────
   Future<void> replaceSources(List<Source> items, String userId) async {
     await _db.transaction((txn) async {
-      await txn.delete('sources', where: 'userId = ?', whereArgs: [userId]);
+      await txn.delete('sources',
+          where: "userId = ? AND syncState != 'pending'", whereArgs: [userId]);
       for (final s in items) {
         await txn.insert('sources', {...s.toMap(), 'userId': userId},
             conflictAlgorithm: ConflictAlgorithm.replace);
@@ -365,7 +579,8 @@ class AppDb {
 
   Future<void> replaceCategories(List<Category> items, String userId) async {
     await _db.transaction((txn) async {
-      await txn.delete('categories', where: 'userId = ?', whereArgs: [userId]);
+      await txn.delete('categories',
+          where: "userId = ? AND syncState != 'pending'", whereArgs: [userId]);
       for (final c in items) {
         await txn.insert('categories', {...c.toMap(), 'userId': userId},
             conflictAlgorithm: ConflictAlgorithm.replace);
@@ -383,6 +598,44 @@ class AppDb {
           where: "userId = ? AND syncState != 'pending'", whereArgs: [userId]);
       for (final t in items) {
         await txn.insert('transactions', {...t.toMap(), 'userId': userId},
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  Future<void> replaceWishlistItems(
+      List<WishlistItem> items, String userId) async {
+    await _db.transaction((txn) async {
+      await txn.delete('wishlist_items',
+          where: "userId = ? AND syncState != 'pending'", whereArgs: [userId]);
+      for (final item in items) {
+        await txn.insert('wishlist_items', {...item.toMap(), 'userId': userId},
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  Future<void> replaceRoutineTransactions(
+      List<RoutineTransaction> items, String userId) async {
+    await _db.transaction((txn) async {
+      await txn.delete('routine_transactions',
+          where: "userId = ? AND syncState != 'pending'", whereArgs: [userId]);
+      for (final item in items) {
+        await txn.insert(
+            'routine_transactions', {...item.toMap(), 'userId': userId},
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  Future<void> replaceRoutinePayments(
+      List<RoutinePayment> items, String userId) async {
+    await _db.transaction((txn) async {
+      await txn.delete('routine_payments',
+          where: "userId = ? AND syncState != 'pending'", whereArgs: [userId]);
+      for (final item in items) {
+        await txn.insert(
+            'routine_payments', {...item.toMap(), 'userId': userId},
             conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
@@ -439,7 +692,12 @@ class AppDb {
 
   Future<int> getPendingWriteCount(String userId) async {
     final results = await Future.wait([
+      getPendingSources(userId),
+      getPendingCategories(userId),
       getPendingTransactions(userId),
+      getPendingWishlistItems(userId),
+      getPendingRoutineTransactions(userId),
+      getPendingRoutinePayments(userId),
       getPendingInsulinItems(userId),
       getPendingInsulinAssigns(userId),
       getPendingInsulinUsages(userId),
@@ -559,6 +817,82 @@ Future<void> _migrateToPerUserPrimaryKeys(Database db) async {
     );
     await db.execute('DROP TABLE $oldTable');
   }
+}
+
+Future<void> _createWishlistAndRoutineTables(Database db) async {
+  await db.execute('''CREATE TABLE IF NOT EXISTS wishlist_items (
+    id TEXT NOT NULL,
+    itemName TEXT NOT NULL,
+    price REAL NOT NULL,
+    transactionType TEXT NOT NULL DEFAULT 'spending',
+    categoryId TEXT,
+    categoryName TEXT,
+    notes TEXT,
+    priority TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    fulfilledPrice REAL,
+    fulfilledAt TEXT,
+    canceledAt TEXT,
+    createdDate TEXT NOT NULL,
+    updatedAt TEXT NOT NULL,
+    syncState TEXT DEFAULT 'synced',
+    userId TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (id, userId)
+  )''');
+  await db.execute('''CREATE TABLE IF NOT EXISTS routine_transactions (
+    id TEXT NOT NULL,
+    itemName TEXT NOT NULL,
+    price REAL NOT NULL,
+    reminder TEXT NOT NULL,
+    categoryId TEXT NOT NULL,
+    categoryName TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    lastBoughtAt TEXT,
+    createdDate TEXT NOT NULL,
+    updatedAt TEXT NOT NULL,
+    syncState TEXT DEFAULT 'synced',
+    userId TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (id, userId)
+  )''');
+  await db.execute('''CREATE TABLE IF NOT EXISTS routine_payments (
+    id TEXT NOT NULL,
+    routineId TEXT NOT NULL,
+    itemName TEXT NOT NULL,
+    price REAL NOT NULL,
+    categoryId TEXT NOT NULL,
+    categoryName TEXT NOT NULL,
+    sourceId TEXT NOT NULL,
+    sourceName TEXT NOT NULL,
+    boughtAt TEXT NOT NULL,
+    syncState TEXT DEFAULT 'synced',
+    userId TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (id, userId)
+  )''');
+}
+
+Future<void> _createActivityTables(Database db) async {
+  await db.execute('''CREATE TABLE IF NOT EXISTS activity_templates (
+    id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    notes TEXT DEFAULT '',
+    category TEXT DEFAULT '',
+    sortOrder INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL,
+    userId TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (id, userId)
+  )''');
+  await db.execute('''CREATE TABLE IF NOT EXISTS daily_activities (
+    id TEXT NOT NULL,
+    templateId TEXT DEFAULT '',
+    title TEXT NOT NULL,
+    notes TEXT DEFAULT '',
+    category TEXT DEFAULT '',
+    activityDate TEXT NOT NULL,
+    doneAt TEXT NOT NULL,
+    userId TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (id, userId)
+  )''');
 }
 
 Future<void> _addColumnIfMissing(

@@ -27,8 +27,8 @@ class ApiUnavailableException extends ApiException {
 
 /// Thrown when transaction-api / health-api reject the request with `401`
 /// because the Bearer token is missing, malformed, invalid, or expired.
-/// Repo treats this as "the login session is gone" and signs the user out
-/// so the UI routes back to `/login`.
+/// Repo keeps the saved login session and falls back to cached data instead
+/// of routing the user back to `/login`.
 class ApiUnauthorizedException extends ApiException {
   const ApiUnauthorizedException(super.message);
 }
@@ -238,6 +238,18 @@ class RemoteApi {
   Future<void> deleteSpendingCategory(String id) async =>
       _delete(_txnUri('/spending-categories/$id'));
 
+  Future<List<Map<String, dynamic>>> getPlannedExpenseCategories() async =>
+      _list(await _get(_txnUri('/planned-expense-categories')));
+
+  Future<Map<String, dynamic>> createPlannedExpenseCategory(
+          String name) async =>
+      Map<String, dynamic>.from(await _post(
+          _txnUri('/planned-expense-categories'),
+          {'planned_expense_category': name}) as Map);
+
+  Future<void> deletePlannedExpenseCategory(String id) async =>
+      _delete(_txnUri('/planned-expense-categories/$id'));
+
   // ── transaction-api: earnings ──────────────────────────────────────────
   Future<List<Map<String, dynamic>>> getEarnings() async =>
       _list(await _get(_txnUri('/earnings')));
@@ -281,6 +293,133 @@ class RemoteApi {
       }) as Map);
 
   // ── health-api: insulin items ──────────────────────────────────────────
+  // Planned expenses
+  Future<List<Map<String, dynamic>>> getPlannedExpenses() async =>
+      _list(await _get(_txnUri('/planned-expenses')));
+
+  Future<Map<String, dynamic>> createPlannedExpense({
+    required String id,
+    required String itemName,
+    required double price,
+    required String transactionType,
+    String? categoryId,
+    String? categoryName,
+    String? notes,
+    required String priority,
+  }) async =>
+      Map<String, dynamic>.from(await _post(_txnUri('/planned-expenses'), {
+        'planned_expense_id': id,
+        'item_name': itemName,
+        'price': price,
+        'transaction_type': transactionType,
+        'category_id': categoryId,
+        'category': categoryName,
+        'notes': notes,
+        'priority': priority,
+      }) as Map);
+
+  Future<void> updatePlannedExpenseStatus({
+    required String id,
+    required String status,
+    double? fulfilledPrice,
+  }) async {
+    final uri = _txnUri('/planned-expenses/$id/status');
+    await _send(
+      'PUT',
+      uri,
+      () => http.put(
+        uri,
+        headers: _headers(),
+        body: jsonEncode({
+          'status': status,
+          'fulfilled_price': fulfilledPrice,
+        }),
+      ),
+      {'status': status, 'fulfilled_price': fulfilledPrice},
+    );
+  }
+
+  Future<void> deletePlannedExpense(String id) async =>
+      _delete(_txnUri('/planned-expenses/$id'));
+
+  Future<List<Map<String, dynamic>>> getWishlist() => getPlannedExpenses();
+
+  Future<Map<String, dynamic>> createWishlist({
+    required String id,
+    required String itemName,
+    required double price,
+    String? notes,
+    required String priority,
+    String transactionType = 'spending',
+    String? categoryId,
+    String? categoryName,
+  }) =>
+      createPlannedExpense(
+        id: id,
+        itemName: itemName,
+        price: price,
+        transactionType: transactionType,
+        categoryId: categoryId,
+        categoryName: categoryName,
+        notes: notes,
+        priority: priority,
+      );
+
+  Future<void> updateWishlistStatus({
+    required String id,
+    required String status,
+    double? fulfilledPrice,
+  }) =>
+      updatePlannedExpenseStatus(
+        id: id,
+        status: status,
+        fulfilledPrice: fulfilledPrice,
+      );
+
+  Future<void> deleteWishlist(String id) => deletePlannedExpense(id);
+
+  // Routine transactions
+  Future<List<Map<String, dynamic>>> getRoutines() async =>
+      _list(await _get(_txnUri('/routines')));
+
+  Future<List<Map<String, dynamic>>> getRoutinePayments() async =>
+      _list(await _get(_txnUri('/routines/payments')));
+
+  Future<Map<String, dynamic>> createRoutine({
+    required String id,
+    required String itemName,
+    required double price,
+    required String reminder,
+    required String spendingCategoryId,
+    required String spendingCategory,
+  }) async =>
+      Map<String, dynamic>.from(await _post(_txnUri('/routines'), {
+        'routine_id': id,
+        'item_name': itemName,
+        'price': price,
+        'reminder': reminder,
+        'spending_category_id': spendingCategoryId,
+        'spending_category': spendingCategory,
+      }) as Map);
+
+  Future<Map<String, dynamic>> createRoutinePayment({
+    required String routineId,
+    required String id,
+    required double price,
+    required String sourceId,
+    required String source,
+  }) async =>
+      Map<String, dynamic>.from(
+          await _post(_txnUri('/routines/$routineId/payments'), {
+        'routine_payment_id': id,
+        'price': price,
+        'source_id': sourceId,
+        'source': source,
+      }) as Map);
+
+  Future<void> deleteRoutine(String id) async =>
+      _delete(_txnUri('/routines/$id'));
+
   Future<List<Map<String, dynamic>>> getInsulinItems() async =>
       _list(await _get(_healthUri('/insulin-item')));
 

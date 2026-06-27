@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../core/remote_api.dart';
+import '../core/config.dart';
 import '../theme/app_theme.dart';
 import '../providers/providers.dart';
 
@@ -59,14 +60,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           username: username,
           password: password,
           email: _emailCtl.text.trim().isEmpty ? null : _emailCtl.text.trim(),
-          phoneNumber: _phoneCtl.text.trim().isEmpty ? null : _phoneCtl.text.trim(),
-          telegramUsername: _telegramCtl.text.trim().isEmpty ? null : _telegramCtl.text.trim(),
+          phoneNumber:
+              _phoneCtl.text.trim().isEmpty ? null : _phoneCtl.text.trim(),
+          telegramUsername: _telegramCtl.text.trim().isEmpty
+              ? null
+              : _telegramCtl.text.trim(),
         );
       }
 
       final auth = await api.login(username: username, password: password);
-      final expiresIn = (auth['expires_in'] as num?)?.toInt() ?? 0;
-      final expiresAt = DateTime.now().add(Duration(seconds: expiresIn)).toIso8601String();
+      await ConfigService.instance.savePassword(password);
+      final expiresIn = (auth['expires_in'] as num?)?.toInt();
+      final expiresAt = expiresIn == null || expiresIn <= 0
+          ? ''
+          : DateTime.now().add(Duration(seconds: expiresIn)).toIso8601String();
 
       await ref.read(configProvider.notifier).update(cfg.copyWith(
             authToken: auth['token'] as String? ?? '',
@@ -110,16 +117,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Container(
-                    width: 56, height: 56,
+                    width: 56,
+                    height: 56,
                     alignment: Alignment.center,
-                    decoration: BoxDecoration(color: c.ink, borderRadius: BorderRadius.circular(16)),
+                    decoration: BoxDecoration(
+                        color: c.ink, borderRadius: BorderRadius.circular(16)),
                     child: Text('PD',
-                        style: TextStyle(color: c.bg, fontWeight: FontWeight.w700, fontSize: 18)),
+                        style: TextStyle(
+                            color: c.bg,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 18)),
                   ),
                   const SizedBox(height: 20),
                   Text(
                     _registerMode ? 'Create an account' : 'Welcome back',
-                    style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: c.ink, letterSpacing: -0.02),
+                    style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w700,
+                        color: c.ink,
+                        letterSpacing: -0.02),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 6),
@@ -144,7 +160,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     style: TextStyle(color: c.ink),
                     decoration: const InputDecoration(labelText: 'Password'),
                     obscureText: true,
-                    textInputAction: _registerMode ? TextInputAction.next : TextInputAction.done,
+                    textInputAction: _registerMode
+                        ? TextInputAction.next
+                        : TextInputAction.done,
                     onSubmitted: (_) => _registerMode ? null : _submit(),
                   ),
                   if (_registerMode) ...[
@@ -152,7 +170,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     TextField(
                       controller: _emailCtl,
                       style: TextStyle(color: c.ink),
-                      decoration: const InputDecoration(labelText: 'Email (optional)'),
+                      decoration:
+                          const InputDecoration(labelText: 'Email (optional)'),
                       keyboardType: TextInputType.emailAddress,
                       textInputAction: TextInputAction.next,
                     ),
@@ -160,7 +179,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     TextField(
                       controller: _phoneCtl,
                       style: TextStyle(color: c.ink),
-                      decoration: const InputDecoration(labelText: 'Phone number (optional)'),
+                      decoration: const InputDecoration(
+                          labelText: 'Phone number (optional)'),
                       keyboardType: TextInputType.phone,
                       textInputAction: TextInputAction.next,
                     ),
@@ -168,7 +188,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     TextField(
                       controller: _telegramCtl,
                       style: TextStyle(color: c.ink),
-                      decoration: const InputDecoration(labelText: 'Telegram username (optional)'),
+                      decoration: const InputDecoration(
+                          labelText: 'Telegram username (optional)'),
                       textInputAction: TextInputAction.done,
                       onSubmitted: (_) => _submit(),
                     ),
@@ -177,12 +198,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   if (_error != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
-                      child: Text(_error!, style: TextStyle(color: c.neg), textAlign: TextAlign.center),
+                      child: Text(_error!,
+                          style: TextStyle(color: c.neg),
+                          textAlign: TextAlign.center),
                     ),
                   if (_info != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
-                      child: Text(_info!, style: TextStyle(color: c.pos), textAlign: TextAlign.center),
+                      child: Text(_info!,
+                          style: TextStyle(color: c.pos),
+                          textAlign: TextAlign.center),
                     ),
                   FilledButton(
                     onPressed: _loading ? null : _submit,
@@ -190,7 +215,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       backgroundColor: c.ink,
                       foregroundColor: c.bg,
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
                     ),
                     child: Text(_loading
                         ? 'Please wait…'
@@ -208,8 +234,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   ),
                   const SizedBox(height: 4),
                   TextButton(
-                    onPressed: _loading ? null : () => context.push('/server-settings'),
-                    child: Text('Server settings', style: TextStyle(color: c.muted)),
+                    onPressed: _loading
+                        ? null
+                        : () => context.push('/server-settings'),
+                    child: Text('Server settings',
+                        style: TextStyle(color: c.muted)),
                   ),
                 ],
               ),

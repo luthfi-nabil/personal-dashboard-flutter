@@ -96,7 +96,9 @@ class SyncService {
 
     _emit(SyncStatus.syncing);
     try {
+      await Repo.instance.syncPendingOptions();
       await Repo.instance.syncPendingTransactions();
+      await Repo.instance.syncPendingPlanningWrites();
       await Repo.instance.syncPendingHealthWrites();
       await onRefresh?.call();
       _emit(SyncStatus.done);

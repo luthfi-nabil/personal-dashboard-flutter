@@ -49,7 +49,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _syncNow() async {
     await ref.read(appDataProvider.notifier).refresh();
     if (!mounted) return;
-    final failed = ref.read(appDataProvider).hasError;
+    final failed = ref.read(appDataProvider).hasError ||
+        ref.read(syncStatusProvider) == SyncStatus.error;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(failed ? 'Sync failed' : 'Synced')),
     );
@@ -287,7 +288,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               )),
           const SizedBox(height: 18),
 
-          // ── Sources ────────────────────────────────────────────
           _SectionTitle('Data', c),
           const SizedBox(height: 10),
           Row(
