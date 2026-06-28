@@ -11,10 +11,12 @@ import '../providers/providers.dart';
 
 class AddTransactionScreen extends ConsumerStatefulWidget {
   final String? editId;
-  const AddTransactionScreen({super.key, this.editId});
+  final String? returnPath;
+  const AddTransactionScreen({super.key, this.editId, this.returnPath});
 
   @override
-  ConsumerState<AddTransactionScreen> createState() => _AddTransactionScreenState();
+  ConsumerState<AddTransactionScreen> createState() =>
+      _AddTransactionScreenState();
 }
 
 class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
@@ -53,7 +55,8 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
       var savedLocally = false;
       switch (_type) {
         case 'earning':
-          final category = data.categories.firstWhere((c) => c.kind == 'earning' && c.name == _category);
+          final category = data.categories
+              .firstWhere((c) => c.kind == 'earning' && c.name == _category);
           final source = data.sources.firstWhere((s) => s.name == _source);
           savedLocally = await Repo.instance.createEarning(
             amount: amount,
@@ -63,7 +66,8 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
           );
           break;
         case 'spending':
-          final category = data.categories.firstWhere((c) => c.kind == 'spending' && c.name == _category);
+          final category = data.categories
+              .firstWhere((c) => c.kind == 'spending' && c.name == _category);
           final source = data.sources.firstWhere((s) => s.name == _source);
           savedLocally = await Repo.instance.createSpending(
             amount: amount,
@@ -87,15 +91,24 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
       if (mounted) {
         if (savedLocally) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('API unavailable - transaction saved locally and will sync once reconnected.')),
+            const SnackBar(
+                content: Text(
+                    'API unavailable - transaction saved locally and will sync once reconnected.')),
           );
         }
-        context.pop();
+        final returnPath = widget.returnPath;
+        if (returnPath == null || returnPath.isEmpty) {
+          context.pop();
+        } else {
+          context.go(returnPath);
+        }
       }
     } catch (e) {
       if (!mounted) return;
-      final message = e is ApiException ? e.message : 'Failed to save transaction.';
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      final message =
+          e is ApiException ? e.message : 'Failed to save transaction.';
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -107,20 +120,25 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
     final dataAsync = ref.watch(appDataProvider);
 
     return dataAsync.when(
-      loading: () => Scaffold(backgroundColor: c.bg, body: Center(child: CircularProgressIndicator(color: c.accent))),
+      loading: () => Scaffold(
+          backgroundColor: c.bg,
+          body: Center(child: CircularProgressIndicator(color: c.accent))),
       error: (e, _) => Scaffold(body: Center(child: Text('Error: $e'))),
       data: (data) {
         // Transactions loaded from transaction-api have no edit/delete endpoint,
         // so they're shown read-only - only brand-new transactions can be created here.
         if (widget.editId != null && widget.editId!.isNotEmpty) {
-          final existing = data.transactions.where((t) => t.id == widget.editId).firstOrNull;
+          final existing =
+              data.transactions.where((t) => t.id == widget.editId).firstOrNull;
           if (existing != null) {
             return _ReadOnlyTransactionView(transaction: existing, c: c);
           }
         }
 
-        final filteredCats = data.categories.where((cat) => cat.kind == _type).toList();
-        if (_category.isNotEmpty && !filteredCats.any((cat) => cat.name == _category)) {
+        final filteredCats =
+            data.categories.where((cat) => cat.kind == _type).toList();
+        if (_category.isNotEmpty &&
+            !filteredCats.any((cat) => cat.name == _category)) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) setState(() => _category = '');
           });
@@ -139,12 +157,18 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     child: Row(
                       children: [
-                        _IconBtn(icon: Icons.close_rounded, onTap: () => context.pop(), c: c),
+                        _IconBtn(
+                            icon: Icons.close_rounded,
+                            onTap: () => context.pop(),
+                            c: c),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             'Add transaction',
-                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: c.ink),
+                            style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                                color: c.ink),
                           ),
                         ),
                         const SizedBox(width: 40),
@@ -173,7 +197,12 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                                 color: active ? c.surface2 : Colors.transparent,
                                 borderRadius: BorderRadius.circular(11),
                                 boxShadow: active
-                                    ? [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 3)]
+                                    ? [
+                                        BoxShadow(
+                                            color:
+                                                Colors.black.withOpacity(0.06),
+                                            blurRadius: 3)
+                                      ]
                                     : null,
                               ),
                               child: Text(
@@ -205,17 +234,31 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                       crossAxisAlignment: CrossAxisAlignment.baseline,
                       textBaseline: TextBaseline.alphabetic,
                       children: [
-                        Text('Rp', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: c.muted)),
+                        Text('Rp',
+                            style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                                color: c.muted)),
                         const SizedBox(width: 8),
                         Expanded(
                           child: TextFormField(
                             controller: _amtCtl,
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
-                            style: TextStyle(fontSize: 32, fontWeight: FontWeight.w700, color: c.ink),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.allow(
+                                  RegExp(r'[0-9.,]'))
+                            ],
+                            style: TextStyle(
+                                fontSize: 32,
+                                fontWeight: FontWeight.w700,
+                                color: c.ink),
                             decoration: InputDecoration(
                               hintText: '0',
-                              hintStyle: TextStyle(color: c.ink.withOpacity(0.18), fontSize: 32, fontWeight: FontWeight.w700),
+                              hintStyle: TextStyle(
+                                  color: c.ink.withOpacity(0.18),
+                                  fontSize: 32,
+                                  fontWeight: FontWeight.w700),
                               border: InputBorder.none,
                               contentPadding: EdgeInsets.zero,
                               isDense: true,
@@ -223,7 +266,8 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                             validator: (v) {
                               if (v == null || v.isEmpty) return 'Required';
                               final n = double.tryParse(v.replaceAll(',', '.'));
-                              if (n == null || n <= 0) return 'Enter a valid amount';
+                              if (n == null || n <= 0)
+                                return 'Enter a valid amount';
                               return null;
                             },
                           ),
@@ -234,37 +278,58 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                   const SizedBox(height: 14),
 
                   // Description
-                  _Field(label: 'Description', child: TextFormField(
-                    controller: _descCtl,
-                    style: TextStyle(fontSize: 15, color: c.ink),
-                    decoration: InputDecoration(hintText: 'What was it?', hintStyle: TextStyle(color: c.muted)),
-                  )),
+                  _Field(
+                      label: 'Description',
+                      child: TextFormField(
+                        controller: _descCtl,
+                        style: TextStyle(fontSize: 15, color: c.ink),
+                        decoration: InputDecoration(
+                            hintText: 'What was it?',
+                            hintStyle: TextStyle(color: c.muted)),
+                      )),
                   const SizedBox(height: 14),
 
                   // Source fields
                   if (_type == 'transfer') ...[
-                    _Field(label: 'From', child: _SourceDropdown(
-                      value: _fromSource, sources: data.sources, c: c,
-                      hint: 'Select source…',
-                      onChanged: (v) => setState(() => _fromSource = v ?? ''),
-                    )),
+                    _Field(
+                        label: 'From',
+                        child: _SourceDropdown(
+                          value: _fromSource,
+                          sources: data.sources,
+                          c: c,
+                          hint: 'Select source…',
+                          onChanged: (v) =>
+                              setState(() => _fromSource = v ?? ''),
+                        )),
                     const SizedBox(height: 14),
-                    _Field(label: 'To', child: _SourceDropdown(
-                      value: _toSource, sources: data.sources, c: c,
-                      hint: 'Select destination…',
-                      onChanged: (v) => setState(() => _toSource = v ?? ''),
-                    )),
+                    _Field(
+                        label: 'To',
+                        child: _SourceDropdown(
+                          value: _toSource,
+                          sources: data.sources,
+                          c: c,
+                          hint: 'Select destination…',
+                          onChanged: (v) => setState(() => _toSource = v ?? ''),
+                        )),
                   ] else ...[
-                    _Field(label: 'Source', child: _SourceDropdown(
-                      value: _source, sources: data.sources, c: c,
-                      hint: 'Select source…',
-                      onChanged: (v) => setState(() => _source = v ?? ''),
-                    )),
+                    _Field(
+                        label: 'Source',
+                        child: _SourceDropdown(
+                          value: _source,
+                          sources: data.sources,
+                          c: c,
+                          hint: 'Select source…',
+                          onChanged: (v) => setState(() => _source = v ?? ''),
+                        )),
                     const SizedBox(height: 14),
-                    _Field(label: 'Category', child: _CategoryDropdown(
-                      value: _category, categories: filteredCats, c: c,
-                      onChanged: (v) => setState(() => _category = v ?? ''),
-                    )),
+                    _Field(
+                        label: 'Category',
+                        child: _CategoryDropdown(
+                          value: _category,
+                          categories: filteredCats,
+                          c: c,
+                          onChanged: (v) => setState(() => _category = v ?? ''),
+                        )),
                   ],
                   const SizedBox(height: 24),
 
@@ -276,18 +341,21 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: c.ink,
                         foregroundColor: c.bg,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
                         elevation: 0,
                       ),
                       child: _saving
                           ? SizedBox(
                               width: 22,
                               height: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: c.bg),
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: c.bg),
                             )
                           : const Text(
                               'Save transaction',
-                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                              style: TextStyle(
+                                  fontSize: 15, fontWeight: FontWeight.w600),
                             ),
                     ),
                   ),
@@ -327,10 +395,17 @@ class _ReadOnlyTransactionView extends ConsumerWidget {
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Row(
                 children: [
-                  _IconBtn(icon: Icons.close_rounded, onTap: () => context.pop(), c: c),
+                  _IconBtn(
+                      icon: Icons.close_rounded,
+                      onTap: () => context.pop(),
+                      c: c),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text('Transaction', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: c.ink)),
+                    child: Text('Transaction',
+                        style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            color: c.ink)),
                   ),
                   const SizedBox(width: 40),
                 ],
@@ -349,23 +424,36 @@ class _ReadOnlyTransactionView extends ConsumerWidget {
                 children: [
                   Text(
                     t.type[0].toUpperCase() + t.type.substring(1),
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c.muted),
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: c.muted),
                   ),
                   const SizedBox(height: 6),
                   Text(
                     '$sign${fmtRp(t.amount, cfg.currency)}',
-                    style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700, color: amountColor),
+                    style: TextStyle(
+                        fontSize: 30,
+                        fontWeight: FontWeight.w700,
+                        color: amountColor),
                   ),
                   const SizedBox(height: 18),
-                  if (t.description.isNotEmpty) _DetailRow(label: 'Description', value: t.description, c: c),
+                  if (t.description.isNotEmpty)
+                    _DetailRow(
+                        label: 'Description', value: t.description, c: c),
                   if (isTransfer) ...[
                     _DetailRow(label: 'From', value: t.fromSource ?? '—', c: c),
                     _DetailRow(label: 'To', value: t.toSource ?? '—', c: c),
                   ] else ...[
                     _DetailRow(label: 'Source', value: t.source ?? '—', c: c),
-                    _DetailRow(label: 'Category', value: t.category ?? '—', c: c),
+                    _DetailRow(
+                        label: 'Category', value: t.category ?? '—', c: c),
                   ],
-                  _DetailRow(label: 'Date', value: fmtDate(t.date, 'long'), c: c, last: true),
+                  _DetailRow(
+                      label: 'Date',
+                      value: fmtDate(t.date, 'long'),
+                      c: c,
+                      last: true),
                 ],
               ),
             ),
@@ -384,7 +472,8 @@ class _ReadOnlyTransactionView extends ConsumerWidget {
                   Expanded(
                     child: Text(
                       'This transaction is synced from the server and cannot be edited or deleted here.',
-                      style: TextStyle(fontSize: 13, color: c.muted, height: 1.4),
+                      style:
+                          TextStyle(fontSize: 13, color: c.muted, height: 1.4),
                     ),
                   ),
                 ],
@@ -402,7 +491,11 @@ class _DetailRow extends StatelessWidget {
   final String value;
   final AppColors c;
   final bool last;
-  const _DetailRow({required this.label, required this.value, required this.c, this.last = false});
+  const _DetailRow(
+      {required this.label,
+      required this.value,
+      required this.c,
+      this.last = false});
 
   @override
   Widget build(BuildContext context) {
@@ -416,7 +509,9 @@ class _DetailRow extends StatelessWidget {
             child: Text(label, style: TextStyle(fontSize: 13, color: c.muted)),
           ),
           Expanded(
-            child: Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: c.ink)),
+            child: Text(value,
+                style: TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.w500, color: c.ink)),
           ),
         ],
       ),
@@ -437,7 +532,9 @@ class _Field extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.only(left: 2, bottom: 6),
-          child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: c.muted)),
+          child: Text(label,
+              style: TextStyle(
+                  fontSize: 12, fontWeight: FontWeight.w500, color: c.muted)),
         ),
         child,
       ],
@@ -451,7 +548,12 @@ class _SourceDropdown extends StatelessWidget {
   final AppColors c;
   final String hint;
   final ValueChanged<String?> onChanged;
-  const _SourceDropdown({required this.value, required this.sources, required this.c, required this.hint, required this.onChanged});
+  const _SourceDropdown(
+      {required this.value,
+      required this.sources,
+      required this.c,
+      required this.hint,
+      required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -459,12 +561,20 @@ class _SourceDropdown extends StatelessWidget {
       value: value.isEmpty ? null : value,
       hint: Text(hint, style: TextStyle(color: c.muted)),
       decoration: InputDecoration(
-        filled: true, fillColor: c.surface,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: c.line, width: 0.5)),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: c.line, width: 0.5)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        filled: true,
+        fillColor: c.surface,
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: c.line, width: 0.5)),
+        enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: c.line, width: 0.5)),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       ),
-      items: sources.map((s) => DropdownMenuItem(value: s.name, child: Text(s.name))).toList(),
+      items: sources
+          .map((s) => DropdownMenuItem(value: s.name, child: Text(s.name)))
+          .toList(),
       onChanged: onChanged,
       validator: (v) => v == null || v.isEmpty ? 'Required' : null,
       dropdownColor: c.surface,
@@ -478,7 +588,11 @@ class _CategoryDropdown extends StatelessWidget {
   final List<Category> categories;
   final AppColors c;
   final ValueChanged<String?> onChanged;
-  const _CategoryDropdown({required this.value, required this.categories, required this.c, required this.onChanged});
+  const _CategoryDropdown(
+      {required this.value,
+      required this.categories,
+      required this.c,
+      required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -486,12 +600,21 @@ class _CategoryDropdown extends StatelessWidget {
       value: value.isEmpty ? null : value,
       hint: Text('— none —', style: TextStyle(color: c.muted)),
       decoration: InputDecoration(
-        filled: true, fillColor: c.surface,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: c.line, width: 0.5)),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: c.line, width: 0.5)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        filled: true,
+        fillColor: c.surface,
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: c.line, width: 0.5)),
+        enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: c.line, width: 0.5)),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       ),
-      items: categories.map((cat) => DropdownMenuItem(value: cat.name, child: Text(cat.name))).toList(),
+      items: categories
+          .map(
+              (cat) => DropdownMenuItem(value: cat.name, child: Text(cat.name)))
+          .toList(),
       onChanged: onChanged,
       validator: (v) => v == null || v.isEmpty ? 'Required' : null,
       dropdownColor: c.surface,
@@ -511,8 +634,10 @@ class _IconBtn extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 40, height: 40,
-        decoration: BoxDecoration(color: c.surface, borderRadius: BorderRadius.circular(12)),
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+            color: c.surface, borderRadius: BorderRadius.circular(12)),
         child: Icon(icon, size: 20, color: c.ink),
       ),
     );

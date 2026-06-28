@@ -512,6 +512,14 @@ String _titleForView(InsulinView view) => switch (view) {
 String _fmtNum(double n) =>
     n == n.roundToDouble() ? n.round().toString() : n.toString();
 
+String _fmtDateTime(String value) {
+  final date = fmtDate(value, 'short');
+  final time = fmtDate(value, 'time');
+  if (date.isEmpty) return time;
+  if (time.isEmpty) return date;
+  return '$date $time';
+}
+
 class _UsageRow {
   final InsulinUsage usage;
   final InsulinAssign? assign;
@@ -890,7 +898,7 @@ class _UsageTile extends StatelessWidget {
                         color: c.ink)),
                 const SizedBox(height: 2),
                 Text(
-                  'Batch ${row.batchNo} · ${fmtDate(row.usage.date, 'short')}'
+                  'Batch ${row.batchNo} · ${_fmtDateTime(row.usage.date)}'
                   '${(row.usage.notes?.isNotEmpty ?? false) ? ' · ${row.usage.notes}' : ''}',
                   style: TextStyle(fontSize: 12, color: c.muted),
                 ),

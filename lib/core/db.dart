@@ -11,6 +11,7 @@ const _userScopedTables = [
   'wishlist_items',
   'routine_transactions',
   'routine_payments',
+  'activity_categories',
   'activity_templates',
   'daily_activities',
   'insulin_items',
@@ -40,7 +41,7 @@ class AppDb {
     _db = await factory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 10,
+        version: 13,
         onCreate: (db, _) async {
           await db.execute('''CREATE TABLE sources (
             id TEXT NOT NULL,
@@ -250,6 +251,18 @@ class AppDb {
             await _addColumnIfMissing(
                 db, 'wishlist_items', 'categoryName TEXT');
           }
+          if (oldVersion < 11) {
+            await _createActivityCategoryTable(db);
+          }
+          if (oldVersion < 12) {
+            await _addColumnIfMissing(
+                db, 'activity_categories', "syncState TEXT DEFAULT 'synced'");
+          }
+          if (oldVersion < 13) {
+            await _addColumnIfMissing(db, 'activity_categories', 'id TEXT');
+            await _addColumnIfMissing(
+                db, 'activity_categories', "updatedAt TEXT DEFAULT ''");
+          }
         },
       ),
     );
@@ -411,6 +424,37 @@ class AppDb {
   }
 
   // Activities
+  Future<List<ActivityCategory>> getActivityCategories(String userId) async {
+    final rows = await _db.query('activity_categories',
+        where: 'userId = ?', whereArgs: [userId], orderBy: 'LOWER(name) ASC');
+    return rows.map(ActivityCategory.fromMap).toList();
+  }
+
+  Future<void> putActivityCategory(ActivityCategory category, String userId,
+      {String syncState = 'synced'}) async {
+    await _db.insert(
+        'activity_categories',
+        {
+          ...category.copyWith(syncState: syncState).toMap(),
+          'userId': userId,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteActivityCategory(String name, String userId) async {
+    await _db.delete('activity_categories',
+        where: 'name = ? AND userId = ?', whereArgs: [name, userId]);
+  }
+
+  Future<List<ActivityCategory>> getPendingActivityCategories(
+      String userId) async {
+    final rows = await _db.query('activity_categories',
+        where: "userId = ? AND syncState = 'pending'",
+        whereArgs: [userId],
+        orderBy: 'LOWER(name) ASC');
+    return rows.map(ActivityCategory.fromMap).toList();
+  }
+
   Future<List<ActivityTemplate>> getActivityTemplates(String userId) async {
     final rows = await _db.query('activity_templates',
         where: 'userId = ?',
@@ -694,6 +738,7 @@ class AppDb {
     final results = await Future.wait([
       getPendingSources(userId),
       getPendingCategories(userId),
+      getPendingActivityCategories(userId),
       getPendingTransactions(userId),
       getPendingWishlistItems(userId),
       getPendingRoutineTransactions(userId),
@@ -870,7 +915,19 @@ Future<void> _createWishlistAndRoutineTables(Database db) async {
   )''');
 }
 
+Future<void> _createActivityCategoryTable(Database db) async {
+  await db.execute('''CREATE TABLE IF NOT EXISTS activity_categories (
+    id TEXT,
+    name TEXT NOT NULL,
+    syncState TEXT DEFAULT 'synced',
+    updatedAt TEXT DEFAULT '',
+    userId TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (name, userId)
+  )''');
+}
+
 Future<void> _createActivityTables(Database db) async {
+  await _createActivityCategoryTable(db);
   await db.execute('''CREATE TABLE IF NOT EXISTS activity_templates (
     id TEXT NOT NULL,
     title TEXT NOT NULL,

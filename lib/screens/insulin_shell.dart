@@ -195,8 +195,9 @@ class _InsulinTopBar extends StatelessWidget {
 
 class InsulinAddPage extends ConsumerStatefulWidget {
   final InsulinAddKind kind;
+  final String? returnPath;
 
-  const InsulinAddPage({super.key, required this.kind});
+  const InsulinAddPage({super.key, required this.kind, this.returnPath});
 
   @override
   ConsumerState<InsulinAddPage> createState() => _InsulinAddPageState();
@@ -567,7 +568,7 @@ class _InsulinAddPageState extends ConsumerState<InsulinAddPage> {
         );
       }
       await ref.read(appDataProvider.notifier).refresh();
-      if (mounted) context.go('/insulin');
+      if (mounted) context.go(widget.returnPath ?? '/insulin');
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1165,7 +1166,7 @@ class _UsageTile extends StatelessWidget {
       icon: Icons.water_drop_outlined,
       title: row.itemName,
       subtitle:
-          'Batch ${row.batchNo} - ${fmtDate(row.usage.date, 'short')}${(row.usage.notes?.isNotEmpty ?? false) ? ' - ${row.usage.notes}' : ''}',
+          'Batch ${row.batchNo} - ${_fmtDateTime(row.usage.date)}${(row.usage.notes?.isNotEmpty ?? false) ? ' - ${row.usage.notes}' : ''}',
       trailing: '${_fmtNum(row.usage.units)} doses',
     );
   }

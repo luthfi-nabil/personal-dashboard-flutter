@@ -92,6 +92,50 @@ class Category {
       );
 }
 
+class ActivityCategory {
+  final String id;
+  final String name;
+  final String syncState;
+  final String updatedAt;
+
+  const ActivityCategory({
+    required this.id,
+    required this.name,
+    this.syncState = 'pending',
+    required this.updatedAt,
+  });
+
+  factory ActivityCategory.fromMap(Map<String, dynamic> m) {
+    final name = (m['activity_category'] ?? m['name'] ?? '').toString();
+    return ActivityCategory(
+      id: (m['activity_category_id'] ?? m['id'] ?? name).toString(),
+      name: name,
+      syncState: m['syncState'] as String? ?? 'synced',
+      updatedAt: (m['created_date'] ?? m['updatedAt'] ?? '').toString(),
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'name': name,
+        'syncState': syncState,
+        'updatedAt': updatedAt,
+      };
+
+  ActivityCategory copyWith({
+    String? id,
+    String? name,
+    String? syncState,
+    String? updatedAt,
+  }) =>
+      ActivityCategory(
+        id: id ?? this.id,
+        name: name ?? this.name,
+        syncState: syncState ?? this.syncState,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
+}
+
 class Transaction {
   final String id;
   final String type;

@@ -12,7 +12,7 @@ class ActivitiesScreen extends ConsumerStatefulWidget {
   ConsumerState<ActivitiesScreen> createState() => _ActivitiesScreenState();
 }
 
-enum _ActivityViewMode { today, week }
+enum _ActivityViewMode { today, week, categories }
 
 class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
   late Future<_ActivityViewData> _future;
@@ -33,11 +33,26 @@ class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
       Repo.instance.getActivityTemplates(),
       Repo.instance.getDailyActivities(now),
       Repo.instance.getDailyActivitiesBetween(weekStart, now),
+      Repo.instance.getActivityCategories(),
     ]);
+    final templates = results[0] as List<ActivityTemplate>;
+    final today = results[1] as List<DailyActivity>;
+    final week = results[2] as List<DailyActivity>;
+    final activityCategories = results[3] as List<ActivityCategory>;
+    final categorySet = <String>{
+      ...activityCategories.map((item) => item.name),
+      ...templates.map((item) => item.category),
+      ...today.map((item) => item.category),
+      ...week.map((item) => item.category),
+    }..removeWhere((category) => category.trim().isEmpty);
+    final categories = categorySet.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     return _ActivityViewData(
-      templates: results[0] as List<ActivityTemplate>,
-      today: results[1] as List<DailyActivity>,
-      week: results[2] as List<DailyActivity>,
+      templates: templates,
+      today: today,
+      week: week,
+      activityCategories: activityCategories,
+      categories: categories,
       weekStart: weekStart,
       weekEnd: now,
     );
@@ -54,27 +69,110 @@ class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
     }
   }
 
+  void _setData(_ActivityViewData data) {
+    if (!mounted) return;
+    setState(() => _lastData = data);
+  }
+
+  _ActivityViewData? get _currentData => _lastData;
+
   void _selectMode(_ActivityViewMode mode) {
     setState(() => _mode = mode);
   }
 
   Future<void> _addTemplate() async {
+    final categories = _lastData?.categories ??
+        (await Repo.instance.getActivityCategories())
+            .map((category) => category.name)
+            .toList();
+    if (!mounted) return;
     final result = await showDialog<_TemplateDraft>(
       context: context,
-      builder: (dialogContext) => const _TemplateDialog(),
+      builder: (dialogContext) => _TemplateDialog(categories: categories),
     );
     if (result == null || result.title.trim().isEmpty) return;
-    await Repo.instance.createActivityTemplate(
+    final template = await Repo.instance.createActivityTemplate(
       title: result.title.trim(),
       notes: result.notes.trim(),
       category: result.category.trim(),
     );
-    await _refresh();
+    final data = _currentData;
+    if (data == null) {
+      await _refresh();
+      return;
+    }
+    _setData(data.withTemplate(template));
+  }
+
+  Future<void> _addCategory() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => const _CategoryDialog(),
+    );
+    final name = result?.trim();
+    if (name == null || name.isEmpty) return;
+    try {
+      final category = await Repo.instance.createActivityCategory(name);
+      if (category == null) return;
+      final data = _currentData;
+      if (data == null) {
+        await _refresh();
+        return;
+      }
+      _setData(data.withActivityCategory(category));
+    } catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not add category: $err')),
+      );
+    }
+  }
+
+  Future<void> _removeActivityCategory(ActivityCategory category) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remove activity category?'),
+        content: Text('Existing activity history tagged "${category.name}" '
+            'will keep the category text.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await Repo.instance.deleteActivityCategory(category);
+      final data = _currentData;
+      if (data == null) {
+        await _refresh();
+        return;
+      }
+      _setData(data.withoutActivityCategory(category));
+    } catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not remove category: $err')),
+      );
+    }
   }
 
   Future<void> _doneToday(ActivityTemplate template) async {
-    await Repo.instance.markActivityDoneToday(template);
-    await _refresh();
+    final activity = await Repo.instance.markActivityDoneToday(template);
+    if (activity == null) return;
+    final data = _currentData;
+    if (data == null) {
+      await _refresh();
+      return;
+    }
+    _setData(data.withDoneActivity(activity));
   }
 
   Future<void> _removeTemplate(ActivityTemplate template) async {
@@ -96,12 +194,22 @@ class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
     );
     if (confirmed != true) return;
     await Repo.instance.deleteActivityTemplate(template);
-    await _refresh();
+    final data = _currentData;
+    if (data == null) {
+      await _refresh();
+      return;
+    }
+    _setData(data.withoutTemplate(template));
   }
 
   Future<void> _removeActivity(DailyActivity activity) async {
     await Repo.instance.removeDailyActivity(activity);
-    await _refresh();
+    final data = _currentData;
+    if (data == null) {
+      await _refresh();
+      return;
+    }
+    _setData(data.withoutDoneActivity(activity));
   }
 
   @override
@@ -115,7 +223,7 @@ class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
           _lastData = snapshot.data;
         }
         final loading = snapshot.connectionState != ConnectionState.done;
-        final data = snapshot.data ?? _lastData ?? _ActivityViewData.empty();
+        final data = _lastData ?? snapshot.data ?? _ActivityViewData.empty();
         final doneTemplateIds =
             data.today.map((activity) => activity.templateId).toSet();
         final weekMetrics = _WeeklyActivityMetrics.from(
@@ -166,7 +274,17 @@ class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
                       checked: _mode == _ActivityViewMode.week,
                       child: const Text('Week metrics'),
                     ),
+                    CheckedPopupMenuItem(
+                      value: _ActivityViewMode.categories,
+                      checked: _mode == _ActivityViewMode.categories,
+                      child: const Text('Categories'),
+                    ),
                   ],
+                ),
+                IconButton(
+                  tooltip: 'Add activity category',
+                  onPressed: _addCategory,
+                  icon: const Icon(Icons.new_label_outlined),
                 ),
                 TextButton.icon(
                   onPressed: _addTemplate,
@@ -212,13 +330,20 @@ class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
                     onRemove: () => _removeTemplate(template),
                   ),
                 ),
-            ] else ...[
+            ] else if (_mode == _ActivityViewMode.week) ...[
               _SectionTitle('Last 7 days', c),
               const SizedBox(height: 10),
               if (snapshot.hasError)
                 _EmptyPanel(c: c, text: 'Could not load activity metrics.')
               else
                 _WeekMetricsView(metrics: weekMetrics, c: c),
+            ] else ...[
+              _ActivityCategoriesView(
+                data: data,
+                c: c,
+                onAdd: _addCategory,
+                onRemove: _removeActivityCategory,
+              ),
             ],
           ],
         );
@@ -231,6 +356,8 @@ class _ActivityViewData {
   final List<ActivityTemplate> templates;
   final List<DailyActivity> today;
   final List<DailyActivity> week;
+  final List<ActivityCategory> activityCategories;
+  final List<String> categories;
   final DateTime weekStart;
   final DateTime weekEnd;
 
@@ -238,6 +365,8 @@ class _ActivityViewData {
     required this.templates,
     required this.today,
     required this.week,
+    required this.activityCategories,
+    required this.categories,
     required this.weekStart,
     required this.weekEnd,
   });
@@ -250,10 +379,120 @@ class _ActivityViewData {
       templates: const [],
       today: const [],
       week: const [],
+      activityCategories: const [],
+      categories: const [],
       weekStart: weekStart,
       weekEnd: now,
     );
   }
+
+  _ActivityViewData copyWith({
+    List<ActivityTemplate>? templates,
+    List<DailyActivity>? today,
+    List<DailyActivity>? week,
+    List<ActivityCategory>? activityCategories,
+    List<String>? categories,
+  }) {
+    return _ActivityViewData(
+      templates: templates ?? this.templates,
+      today: today ?? this.today,
+      week: week ?? this.week,
+      activityCategories: activityCategories ?? this.activityCategories,
+      categories: categories ?? this.categories,
+      weekStart: weekStart,
+      weekEnd: weekEnd,
+    );
+  }
+
+  _ActivityViewData withTemplate(ActivityTemplate template) {
+    final nextTemplates = [
+      ...templates.where((item) => item.id != template.id),
+      template,
+    ]..sort(_compareTemplates);
+    return copyWith(
+      templates: nextTemplates,
+      categories: _mergeCategory(categories, template.category),
+    );
+  }
+
+  _ActivityViewData withoutTemplate(ActivityTemplate template) {
+    return copyWith(
+      templates: templates.where((item) => item.id != template.id).toList(),
+    );
+  }
+
+  _ActivityViewData withDoneActivity(DailyActivity activity) {
+    final nextToday = [
+      ...today.where((item) => item.id != activity.id),
+      activity,
+    ]..sort(_compareDoneToday);
+    final nextWeek = [
+      ...week.where((item) => item.id != activity.id),
+      activity,
+    ]..sort(_compareDoneInRange);
+    return copyWith(
+      today: nextToday,
+      week: nextWeek,
+      categories: _mergeCategory(categories, activity.category),
+    );
+  }
+
+  _ActivityViewData withoutDoneActivity(DailyActivity activity) {
+    return copyWith(
+      today: today.where((item) => item.id != activity.id).toList(),
+      week: week.where((item) => item.id != activity.id).toList(),
+    );
+  }
+
+  _ActivityViewData withCategory(String category) {
+    return copyWith(categories: _mergeCategory(categories, category));
+  }
+
+  _ActivityViewData withActivityCategory(ActivityCategory category) {
+    final trimmed = category.name.trim();
+    if (trimmed.isEmpty) return this;
+    final nextCategories = [
+      ...activityCategories.where(
+          (item) => item.name.trim().toLowerCase() != trimmed.toLowerCase()),
+      category.copyWith(name: trimmed),
+    ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return copyWith(
+      activityCategories: nextCategories,
+      categories: _mergeCategory(categories, trimmed),
+    );
+  }
+
+  _ActivityViewData withoutActivityCategory(ActivityCategory category) {
+    final name = category.name.trim().toLowerCase();
+    return copyWith(
+      activityCategories: activityCategories
+          .where((item) => item.name.trim().toLowerCase() != name)
+          .toList(),
+    );
+  }
+}
+
+int _compareTemplates(ActivityTemplate a, ActivityTemplate b) {
+  final orderCompare = a.sortOrder.compareTo(b.sortOrder);
+  if (orderCompare != 0) return orderCompare;
+  return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+}
+
+int _compareDoneToday(DailyActivity a, DailyActivity b) =>
+    b.doneAt.compareTo(a.doneAt);
+
+int _compareDoneInRange(DailyActivity a, DailyActivity b) {
+  final dateCompare = b.activityDate.compareTo(a.activityDate);
+  if (dateCompare != 0) return dateCompare;
+  return b.doneAt.compareTo(a.doneAt);
+}
+
+List<String> _mergeCategory(List<String> categories, String category) {
+  final trimmed = category.trim();
+  if (trimmed.isEmpty) return categories;
+  final next = {...categories, trimmed}.toList()
+    ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  return next;
 }
 
 class _TemplateDraft {
@@ -269,7 +508,9 @@ class _TemplateDraft {
 }
 
 class _TemplateDialog extends StatefulWidget {
-  const _TemplateDialog();
+  final List<String> categories;
+
+  const _TemplateDialog({required this.categories});
 
   @override
   State<_TemplateDialog> createState() => _TemplateDialogState();
@@ -278,13 +519,12 @@ class _TemplateDialog extends StatefulWidget {
 class _TemplateDialogState extends State<_TemplateDialog> {
   final _titleCtl = TextEditingController();
   final _notesCtl = TextEditingController();
-  final _categoryCtl = TextEditingController();
+  String _selectedCategory = '';
 
   @override
   void dispose() {
     _titleCtl.dispose();
     _notesCtl.dispose();
-    _categoryCtl.dispose();
     super.dispose();
   }
 
@@ -294,7 +534,7 @@ class _TemplateDialogState extends State<_TemplateDialog> {
       _TemplateDraft(
         title: _titleCtl.text,
         notes: _notesCtl.text,
-        category: _categoryCtl.text,
+        category: _selectedCategory,
       ),
     );
   }
@@ -313,13 +553,25 @@ class _TemplateDialogState extends State<_TemplateDialog> {
             textInputAction: TextInputAction.next,
           ),
           const SizedBox(height: 12),
-          TextField(
-            controller: _categoryCtl,
+          DropdownButtonFormField<String>(
+            initialValue: _selectedCategory,
             decoration: const InputDecoration(
               labelText: 'Category',
-              hintText: 'e.g. Health, Work, Exercise',
+              hintText: 'Select a category',
             ),
-            textInputAction: TextInputAction.next,
+            items: [
+              const DropdownMenuItem(value: '', child: Text('No category')),
+              ...widget.categories.map(
+                (category) => DropdownMenuItem(
+                  value: category,
+                  child: Text(category),
+                ),
+              ),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _selectedCategory = value);
+            },
           ),
           const SizedBox(height: 12),
           TextField(
@@ -329,6 +581,54 @@ class _TemplateDialogState extends State<_TemplateDialog> {
             maxLines: 3,
           ),
         ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+
+class _CategoryDialog extends StatefulWidget {
+  const _CategoryDialog();
+
+  @override
+  State<_CategoryDialog> createState() => _CategoryDialogState();
+}
+
+class _CategoryDialogState extends State<_CategoryDialog> {
+  final _nameCtl = TextEditingController();
+
+  @override
+  void dispose() {
+    _nameCtl.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    Navigator.pop(context, _nameCtl.text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New activity category'),
+      content: TextField(
+        controller: _nameCtl,
+        autofocus: true,
+        decoration: const InputDecoration(
+          labelText: 'Category',
+          hintText: 'e.g. Health, Work, Exercise',
+        ),
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => _save(),
       ),
       actions: [
         TextButton(
@@ -478,8 +778,7 @@ class _WeeklyActivityMetrics {
       });
 
     final topCategories = countsByCategory.entries
-        .map((entry) =>
-            _CategoryCount(category: entry.key, count: entry.value))
+        .map((entry) => _CategoryCount(category: entry.key, count: entry.value))
         .toList()
       ..sort((a, b) => b.count.compareTo(a.count));
 
@@ -536,6 +835,317 @@ class _CategoryCount {
   final int count;
 
   const _CategoryCount({required this.category, required this.count});
+}
+
+class _ActivityCategoryRecap {
+  final String category;
+  final List<DailyActivity> activities;
+
+  const _ActivityCategoryRecap({
+    required this.category,
+    required this.activities,
+  });
+
+  int get count => activities.length;
+}
+
+class _ActivityCategoriesView extends StatelessWidget {
+  final _ActivityViewData data;
+  final AppColors c;
+  final VoidCallback onAdd;
+  final ValueChanged<ActivityCategory> onRemove;
+
+  const _ActivityCategoriesView({
+    required this.data,
+    required this.c,
+    required this.onAdd,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final recaps = _activityCategoryRecaps(data);
+    final recapByName = {
+      for (final recap in recaps) recap.category.toLowerCase(): recap,
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _SectionTitle(
+                  'Activity categories (${data.activityCategories.length})', c),
+            ),
+            OutlinedButton.icon(
+              onPressed: onAdd,
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Category'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        if (data.activityCategories.isEmpty)
+          _EmptyPanel(c: c, text: 'No activity categories yet.')
+        else
+          ...data.activityCategories.map((category) {
+            final recap = recapByName[category.name.toLowerCase()] ??
+                _ActivityCategoryRecap(
+                  category: category.name,
+                  activities: const [],
+                );
+            return _ActivityCategoryTile(
+              category: category,
+              recap: recap,
+              c: c,
+              onRemove: () => onRemove(category),
+            );
+          }),
+        const SizedBox(height: 20),
+        _SectionTitle('Completed by category - last 7 days', c),
+        const SizedBox(height: 10),
+        if (recaps.every((recap) => recap.count == 0))
+          _EmptyPanel(c: c, text: 'No completed activity recap yet.')
+        else
+          ...recaps
+              .where((recap) => recap.count > 0)
+              .map((recap) => _ActivityCategoryRecapTile(recap: recap, c: c)),
+      ],
+    );
+  }
+}
+
+class _ActivityCategoryTile extends StatelessWidget {
+  final ActivityCategory category;
+  final _ActivityCategoryRecap recap;
+  final AppColors c;
+  final VoidCallback onRemove;
+
+  const _ActivityCategoryTile({
+    required this.category,
+    required this.recap,
+    required this.c,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _categoryColor(category.name);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.line, width: 0.5),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 10,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        category.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: c.ink,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                    if (category.syncState == 'pending') ...[
+                      const SizedBox(width: 8),
+                      _TinyStatusChip(text: 'Pending', c: c),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${recap.count} completed in the last 7 days',
+                  style: TextStyle(color: c.muted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Remove category',
+            onPressed: onRemove,
+            icon: Icon(Icons.delete_outline_rounded, color: c.muted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActivityCategoryRecapTile extends StatelessWidget {
+  final _ActivityCategoryRecap recap;
+  final AppColors c;
+
+  const _ActivityCategoryRecapTile({
+    required this.recap,
+    required this.c,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _categoryColor(recap.category);
+    final shownActivities = recap.activities.take(4).toList();
+    final remaining = recap.activities.length - shownActivities.length;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: c.surface2,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.line, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  recap.category,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: c.ink,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Text(
+                '${recap.count}',
+                style: TextStyle(
+                  color: c.ink,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ...shownActivities.map((activity) {
+            final date = DateTime.tryParse(activity.activityDate);
+            final dateLabel =
+                date == null ? activity.activityDate : _shortDate(date);
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 44,
+                    child: Text(
+                      dateLabel,
+                      style: TextStyle(color: c.muted, fontSize: 12),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      activity.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: c.ink, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          if (remaining > 0)
+            Text(
+              '+$remaining more',
+              style: TextStyle(color: c.muted, fontSize: 12),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TinyStatusChip extends StatelessWidget {
+  final String text;
+  final AppColors c;
+
+  const _TinyStatusChip({required this.text, required this.c});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: c.accent.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: c.accent,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+List<_ActivityCategoryRecap> _activityCategoryRecaps(_ActivityViewData data) {
+  final names = <String>{
+    ...data.activityCategories.map((category) => category.name),
+    ...data.week.map((activity) => activity.category),
+  }..removeWhere((name) => name.trim().isEmpty);
+  final recaps = names.map((name) {
+    final activities = data.week
+        .where((activity) =>
+            activity.category.trim().toLowerCase() == name.trim().toLowerCase())
+        .toList();
+    return _ActivityCategoryRecap(
+      category: name.trim(),
+      activities: activities,
+    );
+  }).toList();
+  final uncategorized =
+      data.week.where((activity) => activity.category.trim().isEmpty).toList();
+  if (uncategorized.isNotEmpty) {
+    recaps.add(_ActivityCategoryRecap(
+      category: 'Uncategorized',
+      activities: uncategorized,
+    ));
+  }
+  recaps.sort((a, b) {
+    final countCompare = b.count.compareTo(a.count);
+    if (countCompare != 0) return countCompare;
+    return a.category.toLowerCase().compareTo(b.category.toLowerCase());
+  });
+  return recaps;
 }
 
 class _WeekMetricsView extends StatelessWidget {
@@ -857,8 +1467,7 @@ class _TemplateTile extends StatelessWidget {
                 ),
                 if (template.category.isNotEmpty) ...[
                   const SizedBox(height: 4),
-                  _CategoryChip(
-                      category: template.category, color: c.muted),
+                  _CategoryChip(category: template.category, color: c.muted),
                 ],
                 if (template.notes.trim().isNotEmpty) ...[
                   const SizedBox(height: 3),
@@ -935,8 +1544,7 @@ class _DoneActivityTile extends StatelessWidget {
                 ),
                 if (activity.category.isNotEmpty) ...[
                   const SizedBox(height: 4),
-                  _CategoryChip(
-                      category: activity.category, color: c.muted),
+                  _CategoryChip(category: activity.category, color: c.muted),
                 ],
                 if (activity.notes.trim().isNotEmpty || timeLabel.isNotEmpty)
                   Padding(

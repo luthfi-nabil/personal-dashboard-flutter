@@ -895,6 +895,82 @@ class Repo {
   Future<List<ActivityTemplate>> getActivityTemplates() =>
       AppDb.instance.getActivityTemplates(_userId);
 
+  Future<List<ActivityCategory>> getActivityCategories() async {
+    if (_cfg.isLoggedIn && SyncService.instance.isOnline) {
+      try {
+        final raw = await _withTokenRefresh(
+            () => RemoteApi(_cfg).getActivityCategories());
+        final categories = raw
+            .map(ActivityCategory.fromMap)
+            .where((category) => category.name.trim().isNotEmpty)
+            .toList();
+        for (final category in categories) {
+          await AppDb.instance.putActivityCategory(category, _userId);
+        }
+        final merged = [
+          ...categories,
+          ...await AppDb.instance.getPendingActivityCategories(_userId),
+        ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        return merged;
+      } on ApiUnavailableException {
+        // Fall back to local cache below.
+      } on ApiUnauthorizedException {
+        // Fall back to local cache below.
+      }
+    }
+    return AppDb.instance.getActivityCategories(_userId);
+  }
+
+  Future<ActivityCategory?> createActivityCategory(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return null;
+
+    Future<ActivityCategory> savePending() async {
+      final category = ActivityCategory(
+        id: trimmed,
+        name: trimmed,
+        syncState: 'pending',
+        updatedAt: _nowIso(),
+      );
+      await AppDb.instance.putActivityCategory(
+        category,
+        _userId,
+        syncState: 'pending',
+      );
+      await _refreshPendingCount();
+      return category;
+    }
+
+    if (!_cfg.isLoggedIn || !SyncService.instance.isOnline) {
+      return savePending();
+    }
+
+    try {
+      final m = await _withTokenRefresh(
+          () => RemoteApi(_cfg).createActivityCategory(trimmed));
+      final category = ActivityCategory.fromMap(m).copyWith(
+        name: (m['activity_category'] ?? trimmed).toString(),
+        syncState: 'synced',
+        updatedAt: _nowIso(),
+      );
+      await AppDb.instance.putActivityCategory(category, _userId);
+      return category;
+    } on ApiUnavailableException {
+      return savePending();
+    }
+  }
+
+  Future<void> deleteActivityCategory(ActivityCategory category) async {
+    if (category.syncState != 'pending' &&
+        category.id.trim().isNotEmpty &&
+        _cfg.isLoggedIn &&
+        SyncService.instance.isOnline) {
+      await _withTokenRefresh(
+          () => RemoteApi(_cfg).deleteActivityCategory(category.id));
+    }
+    await AppDb.instance.deleteActivityCategory(category.name, _userId);
+  }
+
   Future<List<DailyActivity>> getDailyActivities(DateTime date) =>
       AppDb.instance.getDailyActivities(_userId, _dateKey(date));
 
@@ -998,6 +1074,24 @@ class Repo {
         );
         await AppDb.instance.deleteCategory(category.id, cfg.userId);
         await AppDb.instance.putCategory(synced, cfg.userId);
+      } on ApiUnavailableException {
+        break;
+      } catch (_) {
+        // Keep the pending row for a later retry.
+      }
+    }
+
+    for (final category
+        in await AppDb.instance.getPendingActivityCategories(cfg.userId)) {
+      try {
+        final m = await remote.createActivityCategory(category.name);
+        final synced = ActivityCategory.fromMap(m).copyWith(
+          name: (m['activity_category'] ?? category.name).toString(),
+          syncState: 'synced',
+          updatedAt: _nowIso(),
+        );
+        await AppDb.instance.deleteActivityCategory(category.name, cfg.userId);
+        await AppDb.instance.putActivityCategory(synced, cfg.userId);
       } on ApiUnavailableException {
         break;
       } catch (_) {

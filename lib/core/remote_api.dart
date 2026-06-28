@@ -250,6 +250,16 @@ class RemoteApi {
   Future<void> deletePlannedExpenseCategory(String id) async =>
       _delete(_txnUri('/planned-expense-categories/$id'));
 
+  Future<List<Map<String, dynamic>>> getActivityCategories() async =>
+      _list(await _get(_txnUri('/activity-categories')));
+
+  Future<Map<String, dynamic>> createActivityCategory(String name) async =>
+      Map<String, dynamic>.from(await _post(
+          _txnUri('/activity-categories'), {'activity_category': name}) as Map);
+
+  Future<void> deleteActivityCategory(String id) async =>
+      _delete(_txnUri('/activity-categories/$id'));
+
   // ── transaction-api: earnings ──────────────────────────────────────────
   Future<List<Map<String, dynamic>>> getEarnings() async =>
       _list(await _get(_txnUri('/earnings')));

@@ -62,16 +62,19 @@ class AppMenuDrawer extends ConsumerWidget {
             ),
             Divider(color: c.line2, height: 1),
             _MenuTile(
+              icon: Icons.home_outlined,
+              selectedIcon: Icons.home_rounded,
+              label: 'Home',
+              route: '/',
+              selected: currentPath == '/',
+              c: c,
+            ),
+            _MenuTile(
               icon: Icons.dashboard_outlined,
               selectedIcon: Icons.dashboard_rounded,
               label: 'Finance',
-              route: '/',
-              selected: !currentPath.startsWith('/insulin') &&
-                  !currentPath.startsWith('/activities') &&
-                  !currentPath.startsWith('/wishlist') &&
-                  !currentPath.startsWith('/planned-expenses') &&
-                  !currentPath.startsWith('/routine-transactions') &&
-                  currentPath != '/settings',
+              route: '/dashboard',
+              selected: currentPath == '/dashboard',
               c: c,
             ),
             _MenuTile(

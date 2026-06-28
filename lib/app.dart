@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'screens/main_shell.dart';
+import 'screens/home_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/transactions_screen.dart';
 import 'screens/add_transaction_screen.dart';
@@ -55,7 +56,8 @@ final _router = GoRouter(
       navigatorKey: _shellKey,
       builder: (context, state, child) => MainShell(child: child),
       routes: [
-        GoRoute(path: '/', builder: (c, s) => const DashboardScreen()),
+        GoRoute(path: '/', builder: (c, s) => const HomeScreen()),
+        GoRoute(path: '/dashboard', builder: (c, s) => const DashboardScreen()),
         GoRoute(
             path: '/transactions',
             builder: (c, s) => const TransactionsScreen()),
@@ -88,24 +90,38 @@ final _router = GoRouter(
     ),
     GoRoute(
       path: '/insulin/add-usage',
-      builder: (c, s) => const InsulinAddPage(kind: InsulinAddKind.usage),
+      builder: (c, s) => InsulinAddPage(
+        kind: InsulinAddKind.usage,
+        returnPath: s.uri.queryParameters['returnTo'],
+      ),
     ),
     GoRoute(
       path: '/insulin/add-type',
-      builder: (c, s) => const InsulinAddPage(kind: InsulinAddKind.type),
+      builder: (c, s) => InsulinAddPage(
+        kind: InsulinAddKind.type,
+        returnPath: s.uri.queryParameters['returnTo'],
+      ),
     ),
     GoRoute(
       path: '/insulin/add-batch',
-      builder: (c, s) => const InsulinAddPage(kind: InsulinAddKind.assign),
+      builder: (c, s) => InsulinAddPage(
+        kind: InsulinAddKind.assign,
+        returnPath: s.uri.queryParameters['returnTo'],
+      ),
     ),
     GoRoute(
       path: '/insulin/add-blood-sugar',
-      builder: (c, s) => const InsulinAddPage(kind: InsulinAddKind.bloodSugar),
+      builder: (c, s) => InsulinAddPage(
+        kind: InsulinAddKind.bloodSugar,
+        returnPath: s.uri.queryParameters['returnTo'],
+      ),
     ),
     GoRoute(
       parentNavigatorKey: _rootKey,
       path: '/add',
-      builder: (c, s) => const AddTransactionScreen(),
+      builder: (c, s) => AddTransactionScreen(
+        returnPath: s.uri.queryParameters['returnTo'],
+      ),
     ),
     GoRoute(
       parentNavigatorKey: _rootKey,
