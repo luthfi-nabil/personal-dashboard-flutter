@@ -22,6 +22,14 @@ class Repo {
   Repo._();
 
   String _nowIso() => DateTime.now().toIso8601String();
+  String _nowGmtPlus7Iso() {
+    final d = DateTime.now().toUtc().add(const Duration(hours: 7));
+    String two(int value) => value.toString().padLeft(2, '0');
+    String three(int value) => value.toString().padLeft(3, '0');
+    return '${d.year}-${two(d.month)}-${two(d.day)}'
+        'T${two(d.hour)}:${two(d.minute)}:${two(d.second)}'
+        '.${three(d.millisecond)}';
+  }
 
   AppConfig get _cfg => ConfigService.instance.current;
 
@@ -1355,7 +1363,7 @@ class Repo {
         id: _uuid.v4(),
         assignId: assignId,
         units: units,
-        date: _nowIso(),
+        date: _nowGmtPlus7Iso(),
         notes: notes,
         syncState: 'pending',
       );
